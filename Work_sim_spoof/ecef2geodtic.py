@@ -1,10 +1,25 @@
 #!/usr/bin/env python
 
+from matplotlib import pyplot as plt
 from math import *
 from ecef2geodtic_def import *
 
 
 #------copied from the paper(https://hal.archives-ouvertes.fr/hal-01704943v2/document) 
+
+
+def AddOffset_xy(x,y,dt,speed_x,speed_y,same_speed_xy=False):
+
+
+    if same_speed_xy is True:
+        off_x = x+(dt*speed_x)
+        off_y = y+(dt*speed_x)
+
+    off_x = x+(dt*speed_x)
+    off_y = y+(dt*speed_y)
+
+
+    return off_x, off_y
 
 def GeoToEcef(lat_in,lon_in,alt_in):
 
@@ -30,18 +45,15 @@ def GeoToEcef(lat_in,lon_in,alt_in):
 
     return x,y,z
 
-def Ecef2Geo(lat_in,lon_in,alt_in):
+def Ecef2Geo(x,y,z):
 
-    x,y,z = GeoToEcef(lat_in,lon_in,alt_in)
-
+    
+    '''
     print(' -- Start pos for xyz')
     print('x=',x)
     print('y=',y)
     print('z=',z)
-
-
-
-
+    '''
 
     ww = x * x + y * y
     m = ww * invaa
@@ -49,15 +61,15 @@ def Ecef2Geo(lat_in,lon_in,alt_in):
     mpn = m + n
     p = inv6 * (mpn - ll4)
     G = m * n * ll
-    H = 2 * p * p * p + G
+    H = 2.0 * p * p * p + G
 
 
     if (H < Hmin):
         print('something is wrong With H')
-        #return -1;
+        #return -1
 
 
-    C = ((H + G + 2 * sqrt(H * G))**(1/3)) * invcbrt2
+    C = ((H + G + 2.0 * sqrt(H * G))**(1.0/3.0)) * invcbrt2
     i = -ll - 0.5 * mpn
     P = p * p
     beta = inv3 * i - C - P / C
@@ -69,7 +81,7 @@ def Ecef2Geo(lat_in,lon_in,alt_in):
     t3 = t2 - 0.5 * (beta + i)
     t4 = sqrt(t3)
     #Compute right part of t
-    t5 = 0.5 * (beta - i);
+    t5 = 0.5 * (beta - i)
     # t5 may accidentally drop just below zero due to numeric turbulence
     # This only occurs at latitudes close to +- 45.3 degrees
     t5 = fabs(t5)
@@ -81,12 +93,12 @@ def Ecef2Geo(lat_in,lon_in,alt_in):
 
     #Use Newton-Raphson's method to compute t correction
     j = l * (m - n)
-    g = 2 * j
+    g = 2.0 * j
     tt = t * t
     ttt = tt * t
     tttt = tt * tt
-    F = tttt + 2 * i * tt + g * t + k
-    dFdt = 4 * ttt + 4 * i * t + g
+    F = tttt + 2.0 * i * tt + g * t + k
+    dFdt = 4.0 * ttt + 4.0 * i * t + g
     dt = -F / dFdt
 
     #compute latitude (range -PI/2..PI/2)
@@ -98,12 +110,12 @@ def Ecef2Geo(lat_in,lon_in,alt_in):
     lat = atan2(zu, wv)
 
     #compute altitude
-    invuv = 1 / (u * v)
+    invuv = 1.0 / (u * v)
     dw = w - wv * invuv
     dz = z - zu * p1mee * invuv
     da = sqrt(dw * dw + dz * dz)
-    #alt = (u < 1) ? -da : da;
-    alt = -da if (u < 1) else da
+    #alt = (u < 1) ? -da : da
+    alt = -da if (u < 1.0) else da
 
     #compute longitude (range -PI..PI)
     lon = atan2(y, x)
@@ -118,18 +130,31 @@ def Ecef2Geo(lat_in,lon_in,alt_in):
 
 
 
-
 if __name__ == "__main__":
 
     # start position
     lat = 55.4719841
     lon = 10.3248241
-    alt = 41.1763002681
+    alt = 535.314901042  #41.1763002681 #
 
-    lat,lon,alt = Ecef2Geo(lat,lon,alt)
+    data_x=[]
+    data_y=[]
+
+    for i in range(1):
+        x,y,z = GeoToEcef(lat,lon,alt)
+        x,y = AddOffset_xy(x,y,1.0,1.0,1.0)
+        data_x.append(x)
+        data_y.append(y)
+        lat,lon,alt = Ecef2Geo(x,y,z)
 
     print('')
     print(' -- Output from the function')
     print('latitude = ',lat)
     print('longitude = ',lon)
     print('altitude = ',alt)
+    
+
+    plt.scatter(data_x,data_y,label='Spoofing data')#,color='red',linestyle='--')
+    plt.legend(loc='upper right')
+    plt.grid(False)
+    plt.show()

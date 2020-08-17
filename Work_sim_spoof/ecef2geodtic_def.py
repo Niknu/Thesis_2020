@@ -1,4 +1,8 @@
+# -*- coding: utf-8 -*-
 #!/usr/bin/env python
+
+#The first line is added for running it with python 2.7
+
 
 invaa = 2.45817225764733181057e-0014# 1/ (a²)
 aadc = 7.79540464078689228919e+0007 # a²/c
