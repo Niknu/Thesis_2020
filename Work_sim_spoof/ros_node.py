@@ -6,17 +6,21 @@ import rospy
 from sensor_msgs.msg import NavSatFix       #From the /mavros/global_position/global or mavros/global_position/raw/fix
 from geographic_msgs.msg import GeoPoint    #Part of the HIL_GPS
 from mavros_msgs.msg import HilGPS 
+#from mavros_msgs.srv import ParamSet
 
 
 
 class SpoofingClass():
 
     def __init__(self):
+        self.GEO_class = ecefGeo_class()
         self.t_prev = 0.0
         self.t_current = 0.0
         self.dt = 0
         self.data = None
         self.FirstRun_dt = True
+        self.Pub_data = False
+        self.FirstRun_pos = True
 
         #The data from the raw gps signal
         self.gps_in_lat = 0.0
@@ -34,11 +38,14 @@ class SpoofingClass():
         self.gps_out_alt = 0.0
 
 
+        #init the node and subscribe to the raw signal from the gps
         rospy.init_node('get_GPS_data',anonymous=True)
         rospy.Subscriber('/mavros/global_position/raw/fix',NavSatFix,self.load_data) #The '/mavros/global_position/global' used also the data from the IMU (http://wildfirewatch.elo.utfsm.cl/ros-topology/#global_gps)
         
-        #rospy.Publisher()
-        #rospy.Rate(1000) # 1000 Hz
+        #Create publisher to the HIL gps to send spoofing signal
+        self.pub_spoofing_signal = rospy.Publisher('/mavros/hil/gps',HilGPS,queue_size=10) # remember to 'param set MAV_USEHILGPS 1' in the px4 before this can work
+
+        rospy.Rate(10) # 1000 Hz
         
         rospy.spin()
         
@@ -46,9 +53,11 @@ class SpoofingClass():
     def load_data(self,data):
         self.data = data
 
-        #self.get_dt()
+        self.get_dt()
 
         self.transform_gps_xyz()
+
+        self.publish_data()
 
     def get_dt(self):
 
@@ -72,34 +81,47 @@ class SpoofingClass():
         self.gps_in_lat = self.data.latitude
         self.gps_in_lon = self.data.longitude
         self.gps_in_alt = self.data.altitude
-
+        
     def transform_gps_xyz(self):
         
-        #Get the data
-        self.get_dt()
-        self.get_pos()
+        # -- Get the data
+        #self.get_dt()
 
 
-        #Transform Geo 2 ECEF
-        self.ecef_x,self.ecef_y,self.ecef_z = GeoToEcef(self.gps_in_lat,self.gps_in_lon,self.gps_in_alt)
-        
+        #This is done so we have the 
+        if self.FirstRun_pos is True:
+            self.get_pos()
+            self.FirstRun_pos = False
+            #Transform Geo 2 ECEF
+            self.ecef_x,self.ecef_y,self.ecef_z = self.GEO_class.GeoToEcef(self.gps_in_lat,self.gps_in_lon,self.gps_in_alt)
+
         speed_x = 0.0  #[m/s]
-        speed_y = 0.0  #[m/s]
+        speed_y = 3.0  #[m/s]
 
         #Add offset
-        x , y = AddOffset_xy(self.ecef_x,self.ecef_y,self.dt,speed_x,speed_y)
+        x , y = self.GEO_class.AddOffset_xy(self.ecef_x,self.ecef_y,self.dt,speed_x,speed_y)
         self.ecef_x = x
         self.ecef_y = y
         
         #Transform ECEF 2 Geo
-        lat, lon, alt = Ecef2Geo(self.ecef_x,self.ecef_y,self.ecef_z)
+        lat, lon, alt = self.GEO_class.Ecef2Geo(self.ecef_x,self.ecef_y,self.ecef_z)
         self.gps_out_lat = lat
         self.gps_out_lon = lon
         self.gps_out_alt = alt
 
         print self.gps_out_lat, self.gps_out_lon, self.gps_out_alt
 
-
+    def publish_data(self):
+        lat1 = self.gps_out_lat
+        lon1 = self.gps_out_lon 
+        alt1 = self.gps_out_alt
+        geo1 = GeoPoint(latitude=lat1,longitude=lon1,altitude=alt1)
+        eph1 = 1
+        epv1 = 1
+        vel1 = 0
+        cog1 = 0
+        sat_no = 12
+        self.pub_spoofing_signal.publish(fix_type=3,geo=geo1,eph=eph1,epv=epv1,vel=vel1,cog=cog1,satellites_visible=sat_no)
 
 
 
@@ -107,5 +129,5 @@ class SpoofingClass():
 if __name__ == '__main__':
     try:
         SpoofingClass()
-    except rospy.ROSInterruptException:
-        pass
+    except rospy.ROSInterruptException as e:
+        print (e)
