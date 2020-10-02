@@ -42,6 +42,8 @@ class SpoofingClass():
 
         #init the node and subscribe to the raw signal from the gps
         rospy.init_node('get_GPS_data',anonymous=True)
+
+        #### -------- Check if mavros/global_position/raw/fix gives better results ----- ########
         rospy.Subscriber('/mavros/global_position/global',NavSatFix,self.load_data) #The '/mavros/global_position/global' used also the data from the IMU (http://wildfirewatch.elo.utfsm.cl/ros-topology/#global_gps)
         
         #Create publisher to the HIL gps to send spoofing signal
@@ -85,7 +87,9 @@ class SpoofingClass():
         self.gps_in_lat = self.data.latitude
         self.gps_in_lon = self.data.longitude
         self.gps_in_alt = self.data.altitude
-        
+
+
+
     def transform_gps_xyz(self):
         
         # -- Get the data

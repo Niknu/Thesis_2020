@@ -67,6 +67,7 @@ with rosbag.Bag('static_ground5min.bag') as bag:
                 initial_time_imu = t.to_sec() 
                 print(msg)
                 #print(' ')
+                #print(msg.linear_acceleration.z)
 
             values_imu[counter_imu,0] = msg.linear_acceleration.x
             values_imu[counter_imu,1] = msg.linear_acceleration.y
