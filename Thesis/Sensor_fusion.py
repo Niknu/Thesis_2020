@@ -98,8 +98,11 @@ class Pos_estimation():
             self.FirstRun_KF = False
 
         #Correct KF
-        x_hat , P = self.klmFilt.update(z)
+        self.klmFilt.update(z)
+        #self.klmFilt.update(z)
         
+
+        x_hat = self.klmFilt.x
         self.estPos_pub.publish(x_hat)
 
 
@@ -123,9 +126,9 @@ class Pos_estimation():
         self.klmFilt.predict()
 
         #Correct
-        print(z)
-        x_hat, P = self.klmFilt.update(z)
-
+        
+        self.klmFilt.update(z)
+        x_hat = self.klmFilt.x
         self.estPos_pub.publish(x_hat)
 
 
