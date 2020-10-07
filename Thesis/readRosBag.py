@@ -74,10 +74,10 @@ with rosbag.Bag('static_ground5min.bag') as bag:
             values_imu[counter_imu,2] = msg.linear_acceleration.z
             values_imu[counter_imu,3] = t.to_sec() - initial_time_imu
 
-            gps_cov = np.copy(msg.linear_acceleration_covariance)
+            imu_cov = np.copy(msg.linear_acceleration_covariance)
             
-            #print(gps_cov.reshape(3,3))
-            #print(' ')
+            print(imu_cov.reshape((3,3)))
+            print(' ')
             
 
             counter_imu +=1
@@ -92,6 +92,10 @@ avg_imu_x = np.mean(values_imu[:,0])
 avg_imu_y = np.mean(values_imu[:,1])
 avg_imu_z = np.mean(values_imu[:,2])
 
+
+print('x_off= ',avg_imu_x)
+print('y_off= ',avg_imu_y)
+print('z_off= ',avg_imu_z)
 
 
 ## calulate positon raw from Acceleration ##
