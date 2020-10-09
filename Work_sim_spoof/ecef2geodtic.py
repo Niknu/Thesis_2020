@@ -136,7 +136,7 @@ class ecefGeo_class :
         lon = r2d*lon
         alt = r2d*alt
 
-        if self.alt_0 <= alt+37.0:  #This is implemented to removing the driffing part when it's stable hovering 
+        if self.alt_0 <= alt+37.0:  #This is implemented to removing the driffing part when it's stable hovering (37.0 is a guess)
             alt = self.alt_0
             
 

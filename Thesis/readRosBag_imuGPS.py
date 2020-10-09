@@ -29,11 +29,11 @@ avg_imu_z=0.0
 gps_cov = np.zeros((3,3))
 imu_cov = np.zeros((3,3))
 
-#with rosbag.Bag('ground_to_straightLine.bag') as bag:
-#with rosbag.Bag('ground_to_hover_GPS.bag') as bag:
-#with rosbag.Bag('static_ground.bag') as bag:
-#with rosbag.Bag('static_ground2min.bag') as bag:
-with rosbag.Bag('static_ground5min.bag') as bag:
+#with rosbag.Bag('rosBags/ground_to_straightLine.bag') as bag:
+#with rosbag.Bag('rosBags/ground_to_hover_GPS.bag') as bag:
+#with rosbag.Bag('rosBags/static_ground.bag') as bag:
+#with rosbag.Bag('rosBags/static_ground2min.bag') as bag:
+with rosbag.Bag('rosBags/static_ground5min.bag') as bag:
     for topic, msg, t in bag.read_messages(topics=['/mavros/global_position/global','/mavros/imu/data']):
         
 
@@ -65,7 +65,7 @@ with rosbag.Bag('static_ground5min.bag') as bag:
 
             if initial_time_imu is None:
                 initial_time_imu = t.to_sec() 
-                print(msg)
+                #print(msg)
                 #print(' ')
                 #print(msg.linear_acceleration.z)
 
@@ -76,8 +76,8 @@ with rosbag.Bag('static_ground5min.bag') as bag:
 
             imu_cov = np.copy(msg.linear_acceleration_covariance)
             
-            print(imu_cov.reshape((3,3)))
-            print(' ')
+            #print(imu_cov.reshape((3,3)))
+            #print(' ')
             
 
             counter_imu +=1
