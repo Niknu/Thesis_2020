@@ -5,7 +5,13 @@ import numpy as np
 from filterpy.kalman import KalmanFilter
 from filterpy.common import Q_discrete_white_noise
 import rospy
-from std_msgs.msg import Float32MultiArray
+
+from std_msgs.msg import Float64MultiArray
+from rospy.numpy_msg import numpy_msg
+from rospy_tutorials.msg import Floats
+
+
+
 from sensor_msgs.msg import NavSatFix, Imu     #From the /mavros/global_position/global or mavros/global_position/raw/fix
 from math import *
 
@@ -34,11 +40,12 @@ class Pos_estimation():
         self.IMU_data = np.zeros([3,1])
         self.imu_x_offset = -0.1560196823083865
         self.imu_y_offset = -0.12372256601510975
-        self.imu_z_offset = 9.8038682107820652
+        self.imu_z_offset = -9.8038682107820652
         self.dt=0.1
 
-
-        self.estPos_data = Float32MultiArray()
+        # the publish data-type
+        self.estPos_data = Float64MultiArray()
+        #self.estPos_data = numpy_msg()
 
         self.I = np.eye(3,dtype=float)
         self.ZERO = np.zeros((3,3))
@@ -72,7 +79,7 @@ class Pos_estimation():
         rospy.Subscriber('/mavros/imu/data',Imu,self.imu_data_load)
 
         # creating the publisher
-        self.estPos_pub = rospy.Publisher('/KF_pos_est',Float32MultiArray,queue_size=1)
+        self.estPos_pub = rospy.Publisher('/KF_pos_est',numpy_msg(Floats),queue_size=1)
         rospy.Rate(10) # 10Hz 
         rospy.spin()
 
@@ -99,12 +106,11 @@ class Pos_estimation():
 
         #Correct KF
         self.klmFilt.update(z)
-        #self.klmFilt.update(z)
-        
-
         x_hat = self.klmFilt.x
-        self.estPos_pub.publish(x_hat)
-
+        
+        print('gps shape= ',x_hat.shape)
+        # send data
+        self.pub_xhat_data(x_hat)
 
     def imu_data_load(self,data):
         self.dataIMU = data
@@ -122,15 +128,21 @@ class Pos_estimation():
             self.klmFilt.x = z
             self.klmFilt.P *= 1000.0
             self.FirstRun_KF = False
-        #Predict
+        #Predict KF
         self.klmFilt.predict()
 
-        #Correct
-        
+        #Correct KF
         self.klmFilt.update(z)
         x_hat = self.klmFilt.x
-        self.estPos_pub.publish(x_hat)
 
+        print('imu shape= ',x_hat.shape)
+        # send data
+        self.pub_xhat_data(x_hat)
+
+    def pub_xhat_data(self,data):
+        #print(' ')
+        #print(data)
+        self.estPos_pub.publish(data)
 
     def update_dt_A_Q_R(self,data):
         self.update_dt(data)
