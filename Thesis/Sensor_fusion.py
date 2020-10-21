@@ -17,8 +17,13 @@ from math import *
 from ecef2geodtic_def import * # This is for running the function GEOToNED
 
 
+static_Q = True
+
+
 class Pos_estimation():
     def __init__(self):
+
+        self.scale_QVar = 0.1
 
         self.dataGPS = None
         self.dataIMU = None
@@ -31,23 +36,25 @@ class Pos_estimation():
         self.IMU_on = False
 
         self.GPS_start = True
-        self.GPS_0 = np.zeros([3,1],dtype="float32")
-        self.NED = np.zeros([3,1],dtype="float32")
-        self.R = np.zeros([3,3],dtype="float32")
+        self.GPS_0 = np.zeros([3,1])#,dtype="float32")
+        self.NED = np.zeros([3,1])#,dtype="float32")
+        self.R = np.zeros([3,3])#,dtype="float32")
 
-        self.IMU_data = np.zeros([3,1],dtype="float32")
+        self.IMU_data = np.zeros([3,1])#,dtype="float32")
+
+        ## ---- The Offset is calculated from previsly measurments --- #
         self.imu_x_offset = -0.1560196823083865
         self.imu_y_offset = -0.12372256601510975
         self.imu_z_offset = 9.8038682107820652
         self.dt=0.1
-        self.sensorData = np.zeros([9,1],dtype="float32")
+        self.sensorData = np.zeros([9,1])#,dtype="float32")
 
         # the publish data-type 
         #self.estPos_data = Float64MultiArray()
         #self.estPos_data = numpy_msg()
 
-        self.I = np.eye(3,dtype="float32")
-        self.ZERO = np.zeros((3,3),dtype="float32")
+        self.I = np.eye(3)#,dtype="float32")
+        self.ZERO = np.zeros((3,3))#,dtype="float32")
         
         pv = self.I*self.dt 
         pa = self.I*0.5*self.dt**2
@@ -64,7 +71,14 @@ class Pos_estimation():
         C_acc = np.hstack((self.ZERO,self.ZERO,self.I))
         self.klmFilt.H = np.vstack((C_gps,C_vel,C_acc))
         #klmFilt.Q = np.eye(klmFilt.F.shape[0],dtype=float)
-        self.klmFilt.Q = Q_discrete_white_noise(dim=3, dt=self.dt ,block_size=3,order_by_dim=False)
+
+
+        if static_Q is True:
+            self.klmFilt.Q = np.eye(9)*self.scale_QVar
+        else: 
+            self.klmFilt.Q = Q_discrete_white_noise(dim=3, dt=self.dt ,block_size=3,order_by_dim=False)
+
+        
 
         #self.klmFilt.P *= 1000.0
         self.klmFilt.R = self.klmFilt.H
@@ -78,7 +92,7 @@ class Pos_estimation():
 
         # creating the publisher
         self.estPos_pub = rospy.Publisher('/KF_pos_est',numpy_msg(Floats),queue_size=1)
-        rospy.Rate(10) # 10Hz 
+        #rospy.Rate(10) # 10Hz 
         rospy.spin()
 
 
@@ -96,8 +110,6 @@ class Pos_estimation():
         self.sensorData[1] = self.NED[1]
         self.sensorData[2] = self.NED[2]
 
-        #print(self.NED)
-
         if self.FirstRun_KF is True:
             self.klmFilt.x = self.sensorData
             self.klmFilt.P *= 1000.0
@@ -107,7 +119,6 @@ class Pos_estimation():
         self.klmFilt.update(self.sensorData)
         x_hat = self.klmFilt.x
         
-        #print('gps shape= ',x_hat.shape)
         # send data
         self.pub_xhat_data(x_hat)
 
@@ -121,35 +132,39 @@ class Pos_estimation():
         self.sensorData[7] = self.dataIMU.linear_acceleration.y - self.imu_y_offset
         self.sensorData[8] = self.dataIMU.linear_acceleration.z - self.imu_z_offset
 
-
         if self.FirstRun_KF is True:
             self.klmFilt.x = self.sensorData
             self.klmFilt.P *= 1000.0
             self.FirstRun_KF = False
+
         #Predict KF
         self.klmFilt.predict()
+        
+        #Update KF
+        self.klmFilt.update(self.sensorData)
+
 
         #Correct KF
         self.klmFilt.update(self.sensorData)
         x_hat = self.klmFilt.x
 
-        #print('imu shape= ',x_hat.shape)
         # send data
         self.pub_xhat_data(x_hat)
 
     def pub_xhat_data(self,data):
-        print(' ')
+        #print(' ')
+        Acc_cali_raw = np.array([self.sensorData[6],self.sensorData[7],self.sensorData[8]])
+        data = np.append(data,[self.NED,Acc_cali_raw]) # Add the input data to the KF into the published data (for debugging)
         data = np.float32(data)
-        print(data)
+        #print(data)
         self.estPos_pub.publish(data)
-        #test = np.array([1.0, 2.0,3.0,4.0,5.0,6.0,7.0,8.0,9.0,],dtype="float32")
-        #print(test)
-        #self.estPos_pub.publish(test)
+
 
     def update_dt_A_Q_R(self,data):
         self.update_dt(data)
         self.update_klm_A()
-        self.update_klm_Q()
+        if static_Q is not True:
+            self.update_klm_Q()
 
         if self.GPS_on is True:
             R_gps = np.copy(self.dataGPS.position_covariance)
@@ -208,7 +223,7 @@ class Pos_estimation():
 
         N = a/(sqrt(1.0-E**2.0*sin(lat)**2.0))
         
-        XYZ = np.zeros([3,1],dtype="float32")
+        XYZ = np.zeros([3,1])#,dtype="float32")
 
         XYZ[0] = (N+h)*cos(lat)*cos(lon) #x
         XYZ[1] = (N+h)*cos(lat)*sin(lon) #y
@@ -218,6 +233,7 @@ class Pos_estimation():
             self.GPS_0[0] = XYZ[0]
             self.GPS_0[1] = XYZ[1]
             self.GPS_0[2] = XYZ[2]
+            print('------Resets the Zero pos --- GPS')
             self.GPS_start =  False
 
         self.rotMat_NED(lat,lon)
@@ -242,8 +258,7 @@ class Pos_estimation():
         N = aadc / sqrt(coslat * coslat + bbdcc)
         d = (N + alt) * coslat
 
-        XYZ = np.zeros([3,1],dtype="float32")
-
+        XYZ = np.zeros([3,1])#,dtype="float32")
         XYZ[0] = d * coslon                 #x
         XYZ[1] = d * sinlon                 #y
         XYZ[2] = (p1mee * N + alt) * sinlat #z
@@ -253,18 +268,26 @@ class Pos_estimation():
             self.GPS_0[0] = XYZ[0]
             self.GPS_0[1] = XYZ[1]
             self.GPS_0[2] = XYZ[2]
+            #print('-----RESETS GPS_0')
             self.GPS_start =  False
 
         self.rotMat_NED(lat,lon)
 
-        self.NED = np.dot(self.R,(XYZ-self.GPS_0))   
+        #print('GPS_0= ',self.GPS_0)
+        #print('XYZ= ',XYZ)
+        #print('xyz-gps_0=',XYZ-self.GPS_0)
+        #print('Rot_mat= ',self.R)
+        self.NED = np.dot(self.R,(XYZ-self.GPS_0))    # Have changed the sign in for the z part in R!!!
+
+        #print('NED =',self.NED)
+        #print(' ')
 
     def rotMat_NED(self,lat,lon):
         self.R = np.array([
             [-sin(lat)*cos(lon),-sin(lat)*sin(lon),cos(lat)],
             [-sin(lon),cos(lon),0],
-            [-cos(lat)*cos(lon),-cos(lat)*sin(lon), -sin(lat)]
-        ],dtype="float32")
+            [cos(lat)*cos(lon),cos(lat)*sin(lon), sin(lat)]   ### Change have change compared to the original formula
+        ])#,dtype="float32")
 
 
 
