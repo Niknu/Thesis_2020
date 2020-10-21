@@ -23,8 +23,8 @@ static_trueth = np.zeros((23380, 1))
 
 #with rosbag.Bag('rosBags/KF_output1min_static.bag') as bag:
 #with rosbag.Bag('rosBags/KF_output2min_static.bag') as bag:
-with rosbag.Bag('rosBags/KF_output5min_static.bag') as bag:
-#with rosbag.Bag('rosBags/KF_output2min_ground_to_hover.bag') as bag: # it's to 1.7-1.8m height
+#with rosbag.Bag('rosBags/KF_output5min_static.bag') as bag:
+with rosbag.Bag('rosBags/KF_output1min_ground_to_hover.bag') as bag: # it's to 1.7-1.8m height
     for topic, msg, t in bag.read_messages(topics=['/KF_pos_est']):
         
 
