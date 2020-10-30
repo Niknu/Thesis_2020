@@ -6,7 +6,7 @@ from filterpy.kalman import KalmanFilter
 from filterpy.common import Q_discrete_white_noise
 import rospy
 
-from std_msgs.msg import Float64MultiArray
+from std_msgs.msg import Float64MultiArray, MultiArrayLayout, MultiArrayDimension
 from rospy.numpy_msg import numpy_msg
 from rospy_tutorials.msg import Floats
 
@@ -50,7 +50,7 @@ class Pos_estimation():
         self.sensorData = np.zeros([9,1])#,dtype="float32")
 
         # the publish data-type 
-        #self.estPos_data = Float64MultiArray()
+        #self.msg = Float64MultiArray()
         #self.estPos_data = numpy_msg()
 
         self.I = np.eye(3)#,dtype="float32")
@@ -91,7 +91,8 @@ class Pos_estimation():
         rospy.Subscriber('/mavros/imu/data',Imu,self.imu_data_load)
 
         # creating the publisher
-        self.estPos_pub = rospy.Publisher('/KF_pos_est',numpy_msg(Floats),queue_size=1)
+        #self.estPos_pub = rospy.Publisher('/KF_pos_est',numpy_msg(Floats),queue_size=1)
+        self.estPos_pub_multarry = rospy.Publisher('/KF_pos_est',Float64MultiArray,queue_size=1)
         #rospy.Rate(10) # 10Hz 
         rospy.spin()
 
@@ -155,10 +156,31 @@ class Pos_estimation():
         #print(' ')
         Acc_cali_raw = np.array([self.sensorData[6],self.sensorData[7],self.sensorData[8]])
         data = np.append(data,[self.NED,Acc_cali_raw]) # Add the input data to the KF into the published data (for debugging)
-        data = np.float32(data)
+        
+        #data = np.float32(data)
         #print(data)
-        self.estPos_pub.publish(data)
 
+
+        layout = self.init_multdata(data)
+        data_1 = Float64MultiArray(layout=layout,data=data)
+
+
+        self.estPos_pub_multarry.publish(data_1)
+        #self.estPos_pub.publish(data)
+
+
+    def init_multdata(self,data):
+        msg = MultiArrayLayout()
+
+        msg.data_offset = 0
+
+        msg.dim = [MultiArrayDimension()]
+
+        msg.dim[0].label= "state_estimation"
+        msg.dim[0].size = 15
+        msg.dim[0].stride = 15
+
+        return msg
 
     def update_dt_A_Q_R(self,data):
         self.update_dt(data)

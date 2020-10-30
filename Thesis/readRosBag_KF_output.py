@@ -181,3 +181,15 @@ plt.legend()
 
 
 plt.show()
+
+
+plt.subplot(1,3,1)
+plt.plot(NED_trueth[:,0])
+
+plt.subplot(1,3,2)
+plt.plot(NED_trueth[:,1])
+
+plt.subplot(1,3,3)
+plt.plot(NED_trueth[:,2])
+
+plt.show()
