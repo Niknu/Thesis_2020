@@ -5,16 +5,20 @@ import numpy as np
 from filterpy.kalman import KalmanFilter
 from filterpy.common import Q_discrete_white_noise
 import rospy
+from message_filters import *  # For subscribe to multiple topics and do one thing
+
 
 from std_msgs.msg import Float64MultiArray, MultiArrayLayout, MultiArrayDimension
-from rospy.numpy_msg import numpy_msg
-from rospy_tutorials.msg import Floats
+#from rospy.numpy_msg import numpy_msg
+#from rospy_tutorials.msg import Floats
 
 
-from sensor_msgs.msg import NavSatFix, Imu     #From the /mavros/global_position/global or mavros/global_position/raw/fix
+from sensor_msgs.msg import NavSatFix, Imu, MagneticField    #From the /mavros/global_position/global or mavros/global_position/raw/fix
 from math import *
 
 from ecef2geodtic_def import * # This is for running the function GEOToNED
+from madgwickahrs import MadgwickAHRS
+from quaternion import Quaternion 
 
 
 static_Q = True
@@ -23,43 +27,44 @@ static_Q = True
 class Pos_estimation():
     def __init__(self):
 
-        self.scale_QVar = 0.1
+
+        self.Q_pos = np.eye(3)*0.2
+        self.Q_vel = np.eye(3)*1.0
+        self.Q_acc = np.eye(3)*10.0
 
         self.dataGPS = None
         self.dataIMU = None
         self.t_current = None
         self.t_prev = None
         self.FirstRun_dt = True
-        self.FirstRun_KF = True
 
         self.GPS_on = False
         self.IMU_on = False
+        self.qDot = Quaternion(1, 0, 0, 0)
 
+        self.dt=0.1
         self.GPS_start = True
-        self.GPS_0 = np.zeros([3,1])#,dtype="float32")
-        self.NED = np.zeros([3,1])#,dtype="float32")
-        self.R = np.zeros([3,3])#,dtype="float32")
-
-        self.IMU_data = np.zeros([3,1])#,dtype="float32")
+        self.GPS_0 = np.zeros([3,1])
+        self.NED = np.zeros([3,1])
+        self.R = np.zeros([3,3])
+        self.IMU_data = np.zeros([3,1])
+        self.sensorData = np.zeros([9,1])
 
         ## ---- The Offset is calculated from previsly measurments --- #
         self.imu_x_offset = -0.1560196823083865
         self.imu_y_offset = -0.12372256601510975
         self.imu_z_offset = 9.8038682107820652
-        self.dt=0.1
-        self.sensorData = np.zeros([9,1])#,dtype="float32")
-
-        # the publish data-type 
-        #self.msg = Float64MultiArray()
-        #self.estPos_data = numpy_msg()
-
-        self.I = np.eye(3)#,dtype="float32")
-        self.ZERO = np.zeros((3,3))#,dtype="float32")
+        
+        
+        ## ---- Kalman filter setup ---- ##
+        self.I = np.eye(3)
+        self.ZERO = np.zeros((3,3))
         
         pv = self.I*self.dt 
         pa = self.I*0.5*self.dt**2
 
         P = np.hstack((self.I,pv,pa))
+        #P = np.hstack((self.I,pv,self.ZERO))
         V = np.hstack((self.ZERO,self.I,pv))
         a = np.hstack((self.ZERO,self.ZERO,self.I))
 
@@ -70,25 +75,37 @@ class Pos_estimation():
         C_vel = np.hstack((self.ZERO,self.ZERO,self.ZERO))
         C_acc = np.hstack((self.ZERO,self.ZERO,self.I))
         self.klmFilt.H = np.vstack((C_gps,C_vel,C_acc))
-        #klmFilt.Q = np.eye(klmFilt.F.shape[0],dtype=float)
-
+        self.H_GPS = np.vstack((C_gps,C_vel,C_vel))
+        self.H_acc = np.vstack((C_vel,C_vel,C_acc))
 
         if static_Q is True:
-            self.klmFilt.Q = np.eye(9)*self.scale_QVar
+            self.klmFilt.Q = np.eye(9)
+            self.klmFilt.Q[0:3,0:3] = self.Q_pos
+            self.klmFilt.Q[3:6,3:6] = self.Q_vel
+            self.klmFilt.Q[6:9,6:9] = self.Q_acc
         else: 
             self.klmFilt.Q = Q_discrete_white_noise(dim=3, dt=self.dt ,block_size=3,order_by_dim=False)
 
-        
-
-        #self.klmFilt.P *= 1000.0
+        self.klmFilt.P *= 1000.0
         self.klmFilt.R = self.klmFilt.H
 
         self.klmFilt.inv =  np.linalg.pinv   #The inv method is changed # This is done because it will gives a "linalgError: singular matrix"
+
+
+        # --- Madgwick filter --- #
+        self.beta = 0.334 # This is from his own paper where he point out where it's optimal
+        self.madFilt=MadgwickAHRS(beta=self.beta,sampleperiod=1/self.dt)
+
 
         #init the node and subscribe to the GPS adn IMU
         rospy.init_node('KF_pos_estimation',anonymous=True)
         rospy.Subscriber('/mavros/global_position/raw/fix',NavSatFix,self.gps_data_load)
         rospy.Subscriber('/mavros/imu/data',Imu,self.imu_data_load)
+        #self.mag_data = Subscriber('/mavros/imu/mag',MagneticField)
+        #self.imu_data = Subscriber('/mavros/imu/data',Imu)
+        #self.madgwick_sub = ApproximateTimeSynchronizer([self.mag_data,self.imu_data],1,1)
+        #self.madgwick_sub.registerCallback(self.madgwickFilter_callback)
+        
 
         # creating the publisher
         #self.estPos_pub = rospy.Publisher('/KF_pos_est',numpy_msg(Floats),queue_size=1)
@@ -96,7 +113,29 @@ class Pos_estimation():
         #rospy.Rate(10) # 10Hz 
         rospy.spin()
 
+    '''
+    def madgwickFilter_callback(self,magData,imuData):
+    
+        acc = np.empty(3)
+        gyro = np.empty(3)
+        mag = np.empty(3)
 
+        acc[0] =imuData.linear_acceleration.x
+        acc[1] =imuData.linear_acceleration.y
+        acc[2] =imuData.linear_acceleration.z
+
+        gyro[0] =imuData.angular_velocity.x
+        gyro[1] =imuData.angular_velocity.y
+        gyro[2] =imuData.angular_velocity.z
+
+        mag[0] = magData.magnetic_field.x
+        mag[0] = magData.magnetic_field.y
+        mag[0] = magData.magnetic_field.z
+
+        __ , self.qDot = self.madFilt.update(gyroscope=gyro,accelerometer=acc,magnetometer=mag) # the output is the quat(not used) and qdot
+
+        print(self.qDot[0],self.qDot[1],self.qDot[2],self.qDot[3])
+    '''
 
     def gps_data_load(self,data):
         self.dataGPS = data
@@ -111,13 +150,13 @@ class Pos_estimation():
         self.sensorData[1] = self.NED[1]
         self.sensorData[2] = self.NED[2]
 
-        if self.FirstRun_KF is True:
-            self.klmFilt.x = self.sensorData
-            self.klmFilt.P *= 1000.0
-            self.FirstRun_KF = False
+        #self.klmFilt.x = self.sensorData
+
+        #Predict KF
+        self.klmFilt.predict()
 
         #Correct KF
-        self.klmFilt.update(self.sensorData)
+        self.klmFilt.update(self.sensorData,H=self.H_GPS)
         x_hat = self.klmFilt.x
         
         # send data
@@ -133,43 +172,29 @@ class Pos_estimation():
         self.sensorData[7] = self.dataIMU.linear_acceleration.y - self.imu_y_offset
         self.sensorData[8] = self.dataIMU.linear_acceleration.z - self.imu_z_offset
 
-        if self.FirstRun_KF is True:
-            self.klmFilt.x = self.sensorData
-            self.klmFilt.P *= 1000.0
-            self.FirstRun_KF = False
-
         #Predict KF
         self.klmFilt.predict()
         
-        #Update KF
-        self.klmFilt.update(self.sensorData)
-
-
-        #Correct KF
-        self.klmFilt.update(self.sensorData)
+        #self.klmFilt.x = self.sensorData
+        #Correct/update KF
+        self.klmFilt.update(self.sensorData,H=self.H_acc)
         x_hat = self.klmFilt.x
 
         # send data
         self.pub_xhat_data(x_hat)
 
     def pub_xhat_data(self,data):
-        #print(' ')
+        
         Acc_cali_raw = np.array([self.sensorData[6],self.sensorData[7],self.sensorData[8]])
         data = np.append(data,[self.NED,Acc_cali_raw]) # Add the input data to the KF into the published data (for debugging)
-        
-        #data = np.float32(data)
-        #print(data)
 
-
-        layout = self.init_multdata(data)
+        layout = self.init_multdata()
         data_1 = Float64MultiArray(layout=layout,data=data)
 
-
         self.estPos_pub_multarry.publish(data_1)
-        #self.estPos_pub.publish(data)
+        
 
-
-    def init_multdata(self,data):
+    def init_multdata(self):
         msg = MultiArrayLayout()
 
         msg.data_offset = 0
@@ -217,6 +242,8 @@ class Pos_estimation():
     def update_klm_A(self):
         pv = self.I*self.dt
         pa = self.I*0.5*self.dt**2
+
+
         P = np.hstack((self.I,pv,pa))
         V = np.hstack((self.ZERO,self.I,pv))
         a = np.hstack((self.ZERO,self.ZERO,self.I))
@@ -226,9 +253,13 @@ class Pos_estimation():
         self.klmFilt.Q = Q_discrete_white_noise(dim=3, dt=self.dt ,block_size=3,order_by_dim=False)
 
     def update_Rgps(self, Rgps):
+        R_blank = np.zeros((9,9)) # this is done to be sure that the other part isn't taking into account
+        self.klmFilt.R = R_blank
         self.klmFilt.R[0:3,0:3] = Rgps
 
     def update_Racc(self, Racc):
+        R_blank = np.zeros((9,9)) # This is done to be sure that the other part isn't taking into account
+        self.klmFilt.R = R_blank
         self.klmFilt.R[6:9,6:9] = Racc
 
     def GeoToNED_new(self,lat_in,lon_in,alt_in):
@@ -245,7 +276,7 @@ class Pos_estimation():
 
         N = a/(sqrt(1.0-E**2.0*sin(lat)**2.0))
         
-        XYZ = np.zeros([3,1])#,dtype="float32")
+        XYZ = np.zeros([3,1])
 
         XYZ[0] = (N+h)*cos(lat)*cos(lon) #x
         XYZ[1] = (N+h)*cos(lat)*sin(lon) #y
@@ -280,7 +311,7 @@ class Pos_estimation():
         N = aadc / sqrt(coslat * coslat + bbdcc)
         d = (N + alt) * coslat
 
-        XYZ = np.zeros([3,1])#,dtype="float32")
+        XYZ = np.zeros([3,1])
         XYZ[0] = d * coslon                 #x
         XYZ[1] = d * sinlon                 #y
         XYZ[2] = (p1mee * N + alt) * sinlat #z
@@ -293,8 +324,8 @@ class Pos_estimation():
             #print('-----RESETS GPS_0')
             self.GPS_start =  False
 
-        self.rotMat_NED(lat,lon)
-
+        #self.rotMat_NED(lat,lon)
+        self.rotMat_ENU(lat,lon)
         #print('GPS_0= ',self.GPS_0)
         #print('XYZ= ',XYZ)
         #print('xyz-gps_0=',XYZ-self.GPS_0)
@@ -308,10 +339,15 @@ class Pos_estimation():
         self.R = np.array([
             [-sin(lat)*cos(lon),-sin(lat)*sin(lon),cos(lat)],
             [-sin(lon),cos(lon),0],
-            [cos(lat)*cos(lon),cos(lat)*sin(lon), sin(lat)]   ### Change have change compared to the original formula
-        ])#,dtype="float32")
+            [-cos(lat)*cos(lon),-cos(lat)*sin(lon), -sin(lat)]   ### Change have change compared to the original formula
+        ])
 
-
+    def rotMat_ENU(self,lat,lon):
+        self.R = np.array([
+            [-sin(lon),cos(lon),0],
+            [-sin(lat)*cos(lon),-sin(lat)*sin(lat),cos(lat)],
+            [cos(lat)*cos(lon),cos(lat)*sin(lon),sin(lat)],
+        ])
 
 if __name__ == '__main__':
     try:

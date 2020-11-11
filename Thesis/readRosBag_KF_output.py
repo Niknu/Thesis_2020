@@ -24,11 +24,9 @@ static_trueth = np.zeros((23380, 1))
 #with rosbag.Bag('rosBags/KF_output1min_static.bag') as bag:
 #with rosbag.Bag('rosBags/KF_output2min_static.bag') as bag:
 #with rosbag.Bag('rosBags/KF_output5min_static.bag') as bag:
-with rosbag.Bag('rosBags/KF_output1min_ground_to_hover.bag') as bag: # it's to 1.7-1.8m height
+#with rosbag.Bag('rosBags/KF_output1min_ground_to_hover.bag') as bag: # it's to 1.7-1.8m height
+with rosbag.Bag('rosBags/KF_output1min_ground_to_newpoint.bag') as bag:    
     for topic, msg, t in bag.read_messages(topics=['/KF_pos_est']):
-        
-
-        #print(msg)
 
         pos[counter,0] = msg.data[0] # x
         pos[counter,1] = msg.data[1] # y
@@ -183,13 +181,22 @@ plt.legend()
 plt.show()
 
 
-plt.subplot(1,3,1)
+plt.subplot(1,4,1)
+plt.title('Est')
 plt.plot(NED_trueth[:,0])
 
-plt.subplot(1,3,2)
+plt.subplot(1,4,2)
+plt.title('nord')
 plt.plot(NED_trueth[:,1])
 
-plt.subplot(1,3,3)
+plt.subplot(1,4,3)
+plt.title('up')
 plt.plot(NED_trueth[:,2])
+
+plt.subplot(1,4,4)
+plt.title('path(x,y)')
+plt.plot(NED_trueth[:,1],NED_trueth[:,0],label='KF_data_in')
+plt.plot(pos[:,1],pos[:,0],label='Estimation')
+plt.legend()
 
 plt.show()
