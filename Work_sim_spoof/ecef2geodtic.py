@@ -19,9 +19,9 @@ class ecefGeo_class :
         if same_speed_xy is True:
             off_x = x+(dt*speed_x)
             off_y = y+(dt*speed_x)
-
-        off_x = x+(dt*speed_x)
-        off_y = y+(dt*speed_y)
+        else:
+            off_x = x+(dt*speed_x)
+            off_y = y+(dt*speed_y)
 
 
         return off_x, off_y
