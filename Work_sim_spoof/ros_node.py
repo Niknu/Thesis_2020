@@ -117,7 +117,7 @@ class SpoofingClass():
         self.gps_out_lon = lon
         self.gps_out_alt = alt
 
-        print self.gps_out_lat, self.gps_out_lon, self.gps_out_alt
+        print (self.gps_out_lat, self.gps_out_lon, self.gps_out_alt)
 
 
     '''
