@@ -1,5 +1,7 @@
-# Folder structure
 
+# Folder structure
+Note: Under this project PX4 is used and QGroundControl.
+The PX4 version that is used is the v1.11.3.
 
 ## Work_sim_spoof
 This is for simuluation spoofing attack on a drone in gazebo with SITL PX4
