@@ -46,7 +46,7 @@ class Pos_estimation():
         self.GPS_start = True
         self.GPS_0 = np.zeros([3,1])
         self.NED = np.zeros([3,1])
-        self.R = np.zeros([3,3])
+        self.rot_GPS = np.zeros([3,3])
         self.IMU_data = np.zeros([3,1])
         self.sensorData = np.zeros([9,1])
 
@@ -100,7 +100,7 @@ class Pos_estimation():
         #init the node and subscribe to the GPS adn IMU
         rospy.init_node('KF_pos_estimation',anonymous=True)
         rospy.Subscriber('/mavros/global_position/raw/fix',NavSatFix,self.gps_data_load)
-        rospy.Subscriber('/mavros/imu/data',Imu,self.imu_data_load)
+        rospy.Subscriber('/mavros/imu/data_raw',Imu,self.imu_data_load)
         #self.mag_data = Subscriber('/mavros/imu/mag',MagneticField)
         #self.imu_data = Subscriber('/mavros/imu/data',Imu)
         #self.madgwick_sub = ApproximateTimeSynchronizer([self.mag_data,self.imu_data],1,1)
@@ -192,7 +192,6 @@ class Pos_estimation():
         data_1 = Float64MultiArray(layout=layout,data=data)
 
         self.estPos_pub_multarry.publish(data_1)
-        
 
     def init_multdata(self):
         msg = MultiArrayLayout()
@@ -291,7 +290,7 @@ class Pos_estimation():
 
         self.rotMat_NED(lat,lon)
 
-        self.NED = np.dot(self.R,(XYZ-self.GPS_0))
+        self.NED = np.dot(self.rot_GPS,(XYZ-self.GPS_0))
 
     def GeoToNED_old(self,lat_in,lon_in,alt_in):
 
@@ -329,21 +328,21 @@ class Pos_estimation():
         #print('GPS_0= ',self.GPS_0)
         #print('XYZ= ',XYZ)
         #print('xyz-gps_0=',XYZ-self.GPS_0)
-        #print('Rot_mat= ',self.R)
-        self.NED = np.dot(self.R,(XYZ-self.GPS_0))    # Have changed the sign in for the z part in R!!!
+        #print('Rot_mat= ',self.rot_GPS)
+        self.NED = np.dot(self.rot_GPS,(XYZ-self.GPS_0))    # Have changed the sign in for the z part in R!!!
 
         #print('NED =',self.NED)
         #print(' ')
 
     def rotMat_NED(self,lat,lon):
-        self.R = np.array([
+        self.rot_GPS = np.array([
             [-sin(lat)*cos(lon),-sin(lat)*sin(lon),cos(lat)],
             [-sin(lon),cos(lon),0],
             [-cos(lat)*cos(lon),-cos(lat)*sin(lon), -sin(lat)]   ### Change have change compared to the original formula
         ])
 
     def rotMat_ENU(self,lat,lon):
-        self.R = np.array([
+        self.rot_GPS = np.array([
             [-sin(lon),cos(lon),0],
             [-sin(lat)*cos(lon),-sin(lat)*sin(lat),cos(lat)],
             [cos(lat)*cos(lon),cos(lat)*sin(lon),sin(lat)],
