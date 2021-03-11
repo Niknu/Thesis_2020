@@ -97,23 +97,89 @@ class Quaternion:
 
     # This function below should be used because rot -> quat will only give positive values and not negative
     def rot_to_quat(self,R):
-        # It's from here https://www.euclideanspace.com/maths/geometry/rotations/conversions/matrixToQuaternion/
-        #w = 0.5*np.sqrt(1.0+np.sum(np.diag(R))) # <--- this must not be negative 'sqrt(-1)' isn't possible
-        #x = (R[2,1]-R[1,2])/(4.0*w)
-        #y = (R[0,2]-R[2,1])/(4.0*w)
-        #z = (R[1,0]-R[0,1])/(4.0*w)
 
-        #Question: Can conversion give a negative number for wxyz? It doesn't look like that when sqrt is used. 
+        # This doesn't produce good results
+        #(w, x, y, z) = self.rot_to_quat_m1(R) 
+
+        
+        # This produce good results but for the w, but the rest can't be negative because of sqrt...
+        (w, x, y, z) = self.rot_to_quat_m2(R)
+
+        # This doesn't produce good results.
+        #(w, x, y, z) = self.rot_to_quat_m3(R) 
+
+        return Quaternion(w, x, y, z)
+
+    def rot_to_quat_m1(self,R):
+        # Method 1
+        # It's from here https://www.euclideanspace.com/maths/geometry/rotations/conversions/matrixToQuaternion/
+        w = 0.5*np.sqrt(1.0+np.sum(np.diag(R))) # <--- this must not be negative 'sqrt(-1)' isn't possible
+        x = (R[2,1]-R[1,2])/(4.0*w)
+        y = (R[0,2]-R[2,1])/(4.0*w)
+        z = (R[1,0]-R[0,1])/(4.0*w)
+
+        qnorm = w**2.0 + x**2.0 + y**2.0 + z**2.0
+
+        w = w/qnorm
+        x = x/qnorm
+        y = y/qnorm
+        z = z/qnorm
+
+        return (w, x, y, z)
+
+    def rot_to_quat_m2(self,R):
+        # Method 2
+        # --- !! QUESTION !!: Can conversion give a negative number for wxyz? It doesn't look like that when sqrt is used.  
 
         # https://upcommons.upc.edu/bitstream/handle/2117/178326/2083-A-Survey-on-the-Computation-of-Quaternions-from-Rotation-Matrices.pdf
         # Cayley's method has been picked
         
-
+        
         c = 1.0/4.0
-        w = c*np.sqrt((R[0,0]+R[1,1]+R[2,2]+1)**2.0 + (R[2,1]-R[1,2])**2.0 + (R[0,2]-R[2,0])**2.0 + (R[1,0]-R[0,1])**2.0)
-        x = c*np.sqrt((R[2,1]-R[1,2])**2.0 + (R[0,0]-R[1,1]-R[2,2]+1)**2.0 + (R[1,0]+R[0,1])**2.0 + (R[2,0]+R[0,2])**2.0)
-        y = c*np.sqrt((R[0,2]-R[2,0])**2.0 + (R[1,0]+R[0,1])**2.0 + (R[1,1]-R[0,0]-R[2,2]+1)**2.0 + (R[2,1]+R[1,2])**2.0)
-        z = c*np.sqrt((R[1,0]-R[0,1])**2.0 + (R[2,0]+R[0,2])**2.0 + (R[2,1]+R[1,2])**2.0 + (R[2,2]-R[0,0]-R[2,2]+1)**2.0)
+        w = c*np.sqrt((R[0,0]+R[1,1]+R[2,2]+1.0)**2.0 + (R[2,1]-R[1,2])**2.0 + (R[0,2]-R[2,0])**2.0 + (R[1,0]-R[0,1])**2.0)
+        x = c*np.sqrt((R[2,1]-R[1,2])**2.0 + (R[0,0]-R[1,1]-R[2,2]+1.0)**2.0 + (R[1,0]+R[0,1])**2.0 + (R[2,0]+R[0,2])**2.0)
+        y = c*np.sqrt((R[0,2]-R[2,0])**2.0 + (R[1,0]+R[0,1])**2.0 + (R[1,1]-R[0,0]-R[2,2]+1.0)**2.0 + (R[2,1]+R[1,2])**2.0)
+        z = c*np.sqrt((R[1,0]-R[0,1])**2.0 + (R[2,0]+R[0,2])**2.0 + (R[2,1]+R[1,2])**2.0 + (R[2,2]-R[0,0]-R[2,2]+1.0)**2.0)
+
+        #Normilize the output (restict it to hold unit quaternions properties)
+        qnorm = w**2.0 + x**2.0 + y**2.0 + z**2.0
+
+        w = w/qnorm
+        x = x/qnorm
+        y = y/qnorm
+        z = z/qnorm
+
+        return (w, x, y, z)
+
+    def rot_to_quat_m3(self,R):
+        # Method 3 A simple way of doing it  From https://www.euclideanspace.com/maths/geometry/rotations/conversions/matrixToQuaternion/ 
+
+        trace = R[0,0] + R[1,1] + R[2,2]+1.0 # is removed to avoiding results that is close so zero if its negativ number(R00+R11+R22)
+        if( trace > 0 ):
+            s = 0.5 / np.sqrt(trace+ 1.0)
+            w = 0.25 / s
+            x = ( R[2,1] - R[1,2] ) * s
+            y = ( R[0,2] - R[2,0] ) * s
+            z = ( R[1,0] - R[0,1] ) * s
+        else :
+            if( R[0,0] > R[1,1] and R[0,0] > R[2,2] ):
+                s = 2.0 * np.sqrt( 1.0 + R[0,0] - R[1,1] - R[2,2])
+                w = (R[2,1] - R[1,2] ) / s
+                x = 0.25 * s
+                y = (R[0,1] + R[1,0] ) / s
+                z = (R[0,2] + R[2,0] ) / s
+            elif(R[1,1] > R[2,2]):
+                s = 2.0 * np.sqrt( 1.0 + R[1,1] - R[0,0] - R[2,2])
+                w = (R[0,2] - R[2,0] ) / s
+                x = (R[0,1] + R[1,0] ) / s
+                y = 0.25 * s
+                z = (R[1,2] + R[2,1] ) / s
+            else:
+                s = 2.0 * np.sqrt( 1.0 + R[2,2] - R[0,0] - R[1,1] )
+                w = (R[1,0] - R[0,1] ) / s
+                x = (R[0,2] + R[2,0] ) / s
+                y = (R[1,2] + R[2,1] ) / s
+                z = 0.25 * s
 
         #Normilize the output (restict it to hold unit quaternions properties)
         qnorm = w**2.0 + x**2.0 + y**2.0 + z**2.0
@@ -124,23 +190,23 @@ class Quaternion:
         z = z/qnorm
 
 
-        return Quaternion(w, x, y, z)
+        return (w, x, y, z)
 
 if __name__ == '__main__':
     A = Quaternion(1,1,1,0.5)
-    print 'A._q='
-    print A._q
-    print 'A_ROT='
+    print ('A._q=')
+    print (A._q)
+    print ('A_ROT=')
     
     Arot =  A.get_rot() 
     Aq = A.rot_to_quat(Arot)._q
-    print 'Aq= ',Aq
-    print 'norm of Aq=' ,Aq[0]**2+Aq[1]**2+Aq[2]**2+Aq[3]**2
+    print ('Aq= ',Aq)
+    print ('norm of Aq=' ,Aq[0]**2+Aq[1]**2+Aq[2]**2+Aq[3]**2)
 
 
     B = Quaternion(1,0,0,0)
     AB=A*B
-    print 'AB._q='
-    print AB._q
+    print ('AB._q=')
+    print (AB._q)
 
 
