@@ -52,6 +52,7 @@
 #include <ros/ros.h>
 #include <sensor_msgs/Imu.h>
 #include "std_msgs/String.h"
+#include "std_msgs/Bool.h"
 #include "mavros_msgs/HilGPS.h"
 #include "geographic_msgs/GeoPoint.h"
 
@@ -91,13 +92,17 @@ private:
 
   void gps_cb(const geographic_msgs::GeoPoint::ConstPtr&);
   void gps_cb_inc(const geographic_msgs::GeoPoint::ConstPtr&);
+  void checking_gps_spoofing_active(const double off_lat,const double off_lon,const double off_alt);
   
   ros::Subscriber gps_sub;
   ros::Subscriber gps_sub_inc;
 
+  ros::Publisher spoofing_signal;
+
   double offset_latitude_ = 0.0;
   double offset_longitude_ = 0.0;
   double offset_altitude_ = 0.0;
+  std_msgs::Bool spoofing_signal_active_;
 
   std::string model_name_;
 

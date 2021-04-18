@@ -2,29 +2,69 @@
 
 import matplotlib.pyplot as plt
 import numpy as np
-from filterpy.kalman import KalmanFilter
-from filterpy.common import Q_discrete_white_noise
+from scipy.stats import chi2
+from math import *
+#from filterpy.kalman import KalmanFilter
+#from filterpy.common import Q_discrete_white_noise
 import rospy
 from message_filters import *  # For subscribe to multiple topics and do one thing
 
 
 from std_msgs.msg import Float64MultiArray, MultiArrayLayout, MultiArrayDimension
 #from rospy.numpy_msg import numpy_msg
-#from rospy_tutorials.msg import Floats
+#from rospy_tutorials.msg import FloatsHvad er spoofing? - real - world
 
-
+from mavros_msgs.msg import Altitude
 from sensor_msgs.msg import NavSatFix, Imu, MagneticField    #From the /mavros/global_position/global or mavros/global_position/raw/fix
-from math import *
+from geometry_msgs.msg import PoseStamped
+from gazebo_msgs.msg import ModelStates # For the quaternions
 
 from ecef2geodtic_def import * # This is for running the function GEOToNED
 from madgwickahrs import MadgwickAHRS
 from quaternion import Quaternion 
 
 
-static_Q = True
+import csv
+
+
+'''
+TODO:
+
+Fix the quaternion numerical integration
+    - it could be the when it's zero <1e-8?
+    - or RK4 will solve the problem?
+Subscribe to a topic that goes heigh when it's gets spoofed
+
+Write to the csv file to have plot of the q(chi)vs. time + thresh hole
+
+
+
+'''
+
+
+
 
 class ES_EKF():
     def __init__(self):
+        self.write_csv = True
+        self.spoofOn = False # normal bool value 
+        self.spoofMethod = "Innovation"+"_"  #Measurement or Innovation (Cov_matrix)
+        self.fileName = 'blabla'#'Qdefault_AtoB_1' # ground_spoofing
+
+        self.kalman_validation = False
+        self.kalman_test_name = 'GPS_Qmax_Ground_test_0_IncludeQuat_gyro3axis_0_withP_Reset_DimChange_RHy'
+
+        self.fileName += '.csv'
+
+        # Spoofing detection theshold 
+        alpha = 0.0001 # NOTE: This is chosen because we to say when it's 0.01%(EXSTREM case) out of the distribution
+        DOF = 2 # NOTE: This is 2 because we only measure x,y position (not z yet)
+        self.threshold = chi2.ppf(1-alpha,df=DOF) 
+
+        ##################
+        #   OptiTrack    #
+        ##################
+        self.optiTrack = True  # True when optiTrack used - sets Q and R different + TODO: add or remove z-pos estimation(sets to 0)
 
         ###################
         # For time update #
@@ -32,37 +72,94 @@ class ES_EKF():
         self.t_current = None
         self.t_prev = None
         self.FirstRun_dt = True
-        self.dt = 0.0
+        self.dt = 0.00 # This is updated by a function
+        self.time = self.dt # [s]
 
 
         #############################
         # Kalman Filter init params #
         #############################
-        #self.P_num = np.zeros((3,1))                            # position numinal state
-        #self.V_num = np.zeros((3,1))                            # speed numinal state
-        #self.quat_num = Quaternion(1.0,0.0,0.0,0.0)             # quaterion numinal state
-        #self.OMEGA = np.zeros((4,4))                            # skrew matrix for the angular velocity, used in the norminal state for quaternions
-        self.sensorData = np.zeros([15,1])
-        self.acc_bias = np.zeros([3,1]) # Maybe the *_bias isn't used check it.
-        self.gyro_bias = np.zeros([3,1])
-        self.g = np.array([[0,0,-9.803868]]).reshape((3,-1))
-        self.acc_data = np.zeros([3,1])
-        self.gyro_data = np.zeros([3,1])
-        self.P = np.eye(15)*1000.0                              # Covariance Matrix for KF
-        self.Q = np.ones((15,1))                                # Unsernety for the prediction - Indipendent! therefore dim=1
-        #self.R = np.zeros(15) # moved below H        # <.-- The GPS only or the quat also(madwick filter) ?   # Unsernety for the sensors
+
+        # The value from: https://docs.px4.io/master/en/advanced_config/parameter_reference.html#EKF2_EVV_NOISE
+        
+        # The range for the variance for the mean drift and data noise
+        #                               min      default          max
+        #acc_bias_var    |                0          3/1000        0.01  # bias noise [m/s^3]
+        #gyro_bias_var   |                0          1/1000        0.01  # bias noise [rad/s^2]
+        #acc_meas_noise  |                0.01       3.5/10        1.0   # measurement noise [m/s^2]
+        #gyro_meas_noise |                0.0001     1.5/100       0.1   # measurement noise [rad/s]
+
+        acc_bias_var = 3/1000#              # bias noise [m/s^3]
+        gyro_bias_var = 1/1000#             # bias noise [rad/s^2]
+        acc_meas_noise = 3.5/10#             # measurement noise [m/s^2]
+        gyro_meas_noise = 1.5/100#           # measurement noise [rad/s]
+
+        ###############################------TODO-----Change something here---------------###################################################
+        if self.optiTrack == True:
+            pos_var = 0.1           # Measurement noise (vision) [m] (EKF2_EVP_NOISE)
+        else:
+            pos_var = 0.5           # Measurement noise (GPS) [m]
+        pos_var = 0.5
+
+
+
+
+        no_states = 15  # Number of error states       TODO: Could be 14 due to z axis could be removed due to the height can't be estimated with the IMU
+        no_measure = 3  # Number of measureable states TODO: Could be 2 because of the height(z-axis) can be measured with the GPS
+        self.sensorData = np.zeros([no_measure,1])              # It will contain the NED order where N=y, E=x , D=(z-downwards) so [0]=N,[1]=E,[2]=D
+        
+        
+        self.g = np.array([[0,0,-9.8066]]).reshape((3,-1)) # prev estimatio = -9.803868 --- Gazebo value = -9.8066
+        self.acc_data = np.zeros([3,1])                         # It will contain the NED order where N=y, E=x , D=(z-downwards) so [0]=N,[1]=E,[2]=D
+        self.gyro_data = np.zeros([3,1])                        # It will contain the NED order where N=y, E=x , D=(z-downwards) so [0]=N,[1]=E,[2]=D
+        self.acc_raw = np.zeros([3,1])
+        self.gyro_raw = np.zeros([3,1])
+        self.gyro_prev = np.zeros([3,1])
+
+        self.P = np.eye(no_states)*1000.0                             # Covariance Matrix for KF
+        self.Q = np.zeros((no_states,no_states))                       # Unsernety for the prediction, This contains measurement noise and bias noise due to model the 'random walk' behavior, - Indipendent! therefore dim=no_states
+        
         self.u_delta_h = np.zeros((6,1))                        # The bias update for the sensors
         self.u = np.zeros((6,1))                                # The vector with the sensor input + bias
         self.x_h = np.zeros((10,1))                             # State vector
-        self.x_h[6:10] = Quaternion(1.0,0.0,0.0,0.0)._q
-        self.z = np.zeros((15,1))                               # Vector holing the error of the state and the bias from the sensors
-        self.H = np.zeros((15,15))                              # Only used for the GPS signal
-        self.H[0,0] = 1
-        self.H[1,1] = 1
-        self.H[2,2] = 1
-        self.R = self.H      # <--- Remember that R cov matrix can also come from GPS
-        self.F = None # More details, look 'def Fmatrix_update() ' 
+        self.x_h[6:10] = Quaternion(w_or_q=1,x=0,y=0,z=0)._q
+        self.z = np.zeros((no_states,1))                               # Vector holing the error of the state and the bias from the sensors
+        self.H = np.zeros((no_measure,no_states))                              # Only used for the GPS signal
+        self.F = None # More details, look at the function 'Fmatrix_update()' It's generated there
+        self.R = np.eye(no_measure)                             # <.-- The GPS only or the quat also(madwick filter) ?   # Unsernety for the sensors     #At this current time it's only the GPS data
 
+        if self.optiTrack == True:
+            self.H[0,0] = 1     #y-pos
+            self.H[1,1] = 1     #x-pos
+            self.H[2,2] = 1     #z-pos
+
+            #measurement noise
+            self.Q[3:6,3:6] = np.eye(3)*acc_meas_noise
+            self.Q[6:9,6:9] = np.eye(3)*gyro_meas_noise
+
+            # bias noise
+            self.Q[9:12,9:12] = np.eye(3)*acc_bias_var
+            self.Q[12:15,12:15] =np.eye(3)* gyro_bias_var
+        else:
+            self.H[0,0] = 1     #y-pos
+            self.H[1,1] = 1     #x-pos
+            self.H[2,2] = 0     #z-pos
+            self.g = np.array([[0,0,0]]).reshape((3,-1))
+
+            #measurement noise
+            self.Q[3:6,3:6] = np.eye(3)*acc_meas_noise
+            self.Q[6:9,6:9] = np.eye(3)*gyro_meas_noise
+
+            # bias noise
+            self.Q[9:12,9:12] = np.eye(3)*acc_bias_var
+            self.Q[12:15,12:15] = np.eye(3)*gyro_bias_var
+
+        self.R *= pos_var
+        self.Q[0:3,0:3] = 0 # position doesn't have noise
+        
+        #for x in range(0,no_states):
+        #    print(self.Q[x,:])
+        #exit()
 
         #######################
         # GPS transform setup #
@@ -73,10 +170,27 @@ class ES_EKF():
         self.rot_GPS = np.zeros([3,3]) # The output from the function in rotMat_NED or ENU
 
 
+        ######################
+        # Spoofing detection #  TODO: The size of the avering part needs to be checked due to H, R and y(sensor) has been changed
+        ######################
+        # For the measurement avg approach
+        self.window_size = 5 # chosen randomly 
+        self.z_avg = np.zeros((self.window_size,no_measure,1)) # This is for GPS position NOTE: It's 3D array
+        self.z_i = 0 # The indexing for the z_avg --> z_avg[z_i , :]
+        self.x_avg = np.zeros((self.window_size,no_measure,1)) # NOTE: It's 3D array
+        self.x_i = 0
+
+        # For the cov-matrix avg approach
+        self.P_inv_gamma_array = np.zeros((self.window_size,no_measure,no_measure))
+        self.P_i = 0
+        self.gamma_array = np.zeros((self.window_size,no_measure,1))
+        self.qChi = 0
+        
+        '''
         # --- Madgwick filter --- #
         #self.beta = 0.334 # This is from his own paper where he point out where it's optimal
         #self.madFilt=MadgwickAHRS(beta=self.beta,sampleperiod=1/self.dt)
-
+        '''
 
         #############
         # ROS setup #
@@ -84,8 +198,17 @@ class ES_EKF():
 
         #init the node and subscribe to the GPS adn IMU
         rospy.init_node('ES_EKF',anonymous=True)
-        rospy.Subscriber('/mavros/global_position/raw/fix',NavSatFix,self.correct_KF_GPS)
-        rospy.Subscriber('/mavros/imu/data_raw',Imu,self.prediction_KF_IMU)
+
+        if self.optiTrack == True:
+            #rospy.Subscriber('/mavros/local_position/pose',PoseStamped,self.correct_KF_GPS)
+            rospy.Subscriber('/mavros/global_position/raw/fix',NavSatFix,self.correct_KF_GPS)
+        else:
+            rospy.Subscriber('/mavros/global_position/raw/fix',NavSatFix,self.correct_KF_GPS)
+
+        rospy.Subscriber('/mavros/altitude',Altitude,self.update_z)
+        #rospy.Subscriber('/mavros/imu/data_raw',Imu,self.prediction_KF_IMU) # NOTE: This needs to be cleared out what topic should be used..
+        rospy.Subscriber('/mavros/imu/data',Imu,self.prediction_KF_IMU)
+        #rospy.Subscriber('/gazebo/model_states', ModelStates,self.cal_quat_predict) # The orientation is with respect to the gazebo world frame, normally it's respect to the local frame due to the IMU is with repect to the local frame
         #self.mag_data = Subscriber('/mavros/imu/mag',MagneticField)
         #self.imu_data = Subscriber('/mavros/imu/data',Imu)
         #self.madgwick_sub = ApproximateTimeSynchronizer([self.mag_data,self.imu_data],1,1)
@@ -105,113 +228,22 @@ class ES_EKF():
         gyro = np.empty(3)
         mag = np.empty(3)
 
-        acc[0] =imuData.linear_acceleration.x
-        acc[1] =imuData.linear_acceleration.y
+        acc[0] =imuData.linear_acceleration.y
+        acc[1] =imuData.linear_acceleration.x
         acc[2] =imuData.linear_acceleration.z
 
-        gyro[0] =imuData.angular_velocity.x
-        gyro[1] =imuData.angular_velocity.y
+        gyro[0] =imuData.angular_velocity.y
+        gyro[1] =imuData.angular_velocity.x
         gyro[2] =imuData.angular_velocity.z
 
-        mag[0] = magData.magnetic_field.x
         mag[0] = magData.magnetic_field.y
+        mag[0] = magData.magnetic_field.x
         mag[0] = magData.magnetic_field.z
 
         __ , self.qDot = self.madFilt.update(gyroscope=gyro,accelerometer=acc,magnetometer=mag) # the output is the quat(not used) and qdot
 
         print(self.qDot[0],self.qDot[1],self.qDot[2],self.qDot[3])
     '''
-
-    def gps_data_load(self,data):
-        self.dataGPS = data
-        self.GPS_on = True
-        self.update_dt_A_Q_R(self.dataGPS)
-        self.GPS_on = False
-
-        #Transform to local coordinates, where z is possitive downwards
-        self.GeoToNED_old(self.dataGPS.latitude,self.dataGPS.longitude,self.dataGPS.altitude)
-
-        self.sensorData[0] = self.NED[0]
-        self.sensorData[1] = self.NED[1]
-        self.sensorData[2] = self.NED[2]
-
-        #self.klmFilt.x = self.sensorData
-
-        #Predict KF
-        self.klmFilt.predict()
-
-        #Correct KF
-        self.klmFilt.update(self.sensorData,H=self.H_GPS)
-        x_hat = self.klmFilt.x
-        
-        # send data
-        self.pub_xhat_data(x_hat)
-
-    def imu_data_load(self,data):
-        self.dataIMU = data
-        self.IMU_on = True
-        self.update_dt_A_Q_R(self.dataIMU)
-        self.IMU_on = False
-
-        self.sensorData[6] = self.dataIMU.linear_acceleration.x - self.imu_x_offset
-        self.sensorData[7] = self.dataIMU.linear_acceleration.y - self.imu_y_offset
-        self.sensorData[8] = self.dataIMU.linear_acceleration.z - self.imu_z_offset
-
-        #Predict KF
-        self.klmFilt.predict()
-        
-        #self.klmFilt.x = self.sensorData
-        #Correct/update KF
-        self.klmFilt.update(self.sensorData,H=self.H_acc)
-        x_hat = self.klmFilt.x
-
-        # send data
-        self.pub_xhat_data(x_hat)
-
-    def pub_xhat_data(self,data):
-
-        # Hint: To see the output on rqt_plot (https://answers.ros.org/question/226584/how-do-i-use-rqt_plot-to-subscribe-to-std_msgs/)
-
-
-        Acc_cali_raw = np.array([self.sensorData[6],self.sensorData[7],self.sensorData[8]])
-        data = np.append(data,[self.NED,Acc_cali_raw]) # Add the input data to the KF into the published data (for debugging)
-
-        layout = self.init_multdata()
-        data_1 = Float64MultiArray(layout=layout,data=data)
-
-        self.estPos_pub_multarry.publish(data_1)
-
-    def init_multdata(self):
-        msg = MultiArrayLayout()
-
-        msg.data_offset = 0
-
-        msg.dim = [MultiArrayDimension()]
-
-        msg.dim[0].label= "state_estimation"
-        msg.dim[0].size = 15
-        msg.dim[0].stride = 15
-
-        return msg
-
-    def update_dt_A_Q_R(self,data):
-        self.update_dt(data)
-        self.update_klm_A()
-        if static_Q is not True:
-            self.update_klm_Q()
-
-        if self.GPS_on is True:
-            R_gps = np.copy(self.dataGPS.position_covariance)
-            R_gps = np.reshape(R_gps,(3,3))
-            #print('R_gps shape= ',R_gps)
-            #print(' ')
-            self.update_Rgps(R_gps)
-        elif self.IMU_on is True:
-            R_acc = np.copy(self.dataIMU.linear_acceleration_covariance)
-            R_acc = np.reshape(R_acc,(3,3))
-            #print('R_acc shape= ',R_acc)
-            #print(' ')
-            self.update_Racc(R_acc)
 
     def update_dt(self,data):
         t_secs_new = data.header.stamp.secs
@@ -221,33 +253,10 @@ class ES_EKF():
         
         if self.FirstRun_dt is not True:
             self.dt = t_current - self.t_prev                   #Find the time difference (delta t)
-
+            self.time += self.dt
         self.t_prev = t_current
 
         self.FirstRun_dt = False
-
-    def update_klm_A(self):
-        pv = self.I*self.dt
-        pa = self.I*0.5*self.dt**2
-
-
-        P = np.hstack((self.I,pv,pa))
-        V = np.hstack((self.ZERO,self.I,pv))
-        a = np.hstack((self.ZERO,self.ZERO,self.I))
-        self.klmFilt.F = np.vstack((P,V,a))
-
-    def update_klm_Q(self):
-        self.klmFilt.Q = Q_discrete_white_noise(dim=3, dt=self.dt ,block_size=3,order_by_dim=False)
-
-    def update_Rgps(self, Rgps):
-        R_blank = np.zeros((9,9)) # this is done to be sure that the other part isn't taking into account
-        self.klmFilt.R = R_blank
-        self.klmFilt.R[0:3,0:3] = Rgps
-
-    def update_Racc(self, Racc):
-        R_blank = np.zeros((9,9)) # This is done to be sure that the other part isn't taking into account
-        self.klmFilt.R = R_blank
-        self.klmFilt.R[6:9,6:9] = Racc
 
     def GeoToNED_new(self,lat_in,lon_in,alt_in):
         
@@ -273,12 +282,11 @@ class ES_EKF():
             self.GPS_0[0] = XYZ[0]
             self.GPS_0[1] = XYZ[1]
             self.GPS_0[2] = XYZ[2]
-            print('------Resets the Zero pos --- GPS')
             self.GPS_start =  False
 
         self.rotMat_NED(lat,lon)
 
-        self.NED = np.dot(self.rot_GPS,(XYZ-self.GPS_0))
+        self.NED = self.rot_GPS @ (XYZ-self.GPS_0)
 
     def GeoToNED_old(self,lat_in,lon_in,alt_in):
 
@@ -308,21 +316,13 @@ class ES_EKF():
             self.GPS_0[0] = XYZ[0]
             self.GPS_0[1] = XYZ[1]
             self.GPS_0[2] = XYZ[2]
-            #print('-----RESETS GPS_0')
             self.GPS_start =  False
 
+        #self.rotMat_NED(lat,lon) # Have changed the sign in for the z part in R!!!
         self.rotMat_NED(lat,lon)
-        #self.rotMat_ENU(lat,lon)
-        #print('GPS_0= ',self.GPS_0)
-        #print('XYZ= ',XYZ)
-        #print('xyz-gps_0=',XYZ-self.GPS_0)
-        #print('Rot_mat= ',self.R)
 
         # NED = rot_GPS*(XYZ-GPS_0)
-        self.NED = np.dot(self.rot_GPS,(XYZ-self.GPS_0))    # Have changed the sign in for the z part in R!!!
-
-        #print('NED =',self.NED)
-        #print(' ')
+        self.NED = self.rot_GPS @ (XYZ-self.GPS_0)    
 
     def rotMat_NED(self,lat,lon):
         self.rot_GPS = np.array([
@@ -354,8 +354,30 @@ class ES_EKF():
 
         self.estPos_pub_multarry.publish(data_1)
 
-        print self.P
+        #print self.P
+        
+        #print('--- Pos ---')
+        #print(data[0])
+        #print(data[1])
+        #print(data[2])
+        #print('--- vel-z ---')
+        #print(data[5])
+        #print(' -- quat --')
+        #print('x=',data[7])
+        #print('y=',data[8])
+        #print('z=',data[9])
+        #print('w=',data[6])
+        #print('')
+        '''
+        print(' -- cov(pos) -- ')
+        print(self.P[0,0])
+        print(self.P[1,1])
+        print(self.P[2,2])
+        '''
+        '''
+        print (data[6])
         print '----'
+        '''
 
     def init_multdata_NEW(self,data):
         msg = MultiArrayLayout()
@@ -370,152 +392,383 @@ class ES_EKF():
 
         return msg
 
+    #NOTE: Maybe the height for the should be injected at the end of the GeotoNED function
+    def update_z(self,data):
+        self.GPS_z = data.amsl  # Above Mean Sea Level
+
     def prediction_KF_IMU(self,data_IMU):
         self.update_dt(data_IMU)
 
         # Load data and correct data with the bias
-        self.acc_data[0] = data_IMU.linear_acceleration.x + self.u_delta_h[0]
-        self.acc_data[1] = data_IMU.linear_acceleration.y + self.u_delta_h[1]
-        self.acc_data[2] = data_IMU.linear_acceleration.z + self.u_delta_h[2]
-        self.gyro_data[0] = data_IMU.angular_velocity.x + self.u_delta_h[3]
-        self.gyro_data[1] = data_IMU.angular_velocity.y + self.u_delta_h[4]
-        self.gyro_data[2] = data_IMU.angular_velocity.z + self.u_delta_h[5]
+        self.acc_data[0] = data_IMU.linear_acceleration.x - self.u_delta_h[0]
+        self.acc_data[1] = data_IMU.linear_acceleration.y - self.u_delta_h[1]
+        self.acc_raw[0] = data_IMU.linear_acceleration.x
+        self.acc_raw[1] = data_IMU.linear_acceleration.y
+        
+        if self.optiTrack == False:
+            self.acc_data[2] = 0
+            self.acc_raw[2] = 0
+        else:
+            self.acc_data[2] = data_IMU.linear_acceleration.z - self.u_delta_h[2]
+            self.acc_raw[2] = data_IMU.linear_acceleration.z
 
-        quat_temp = Quaternion(w=self.x_h[6],x=self.x_h[7],y=self.x_h[8],z=self.x_h[9])
+        # Corrected
+        self.gyro_data[0] = data_IMU.angular_velocity.x - self.u_delta_h[3]
+        self.gyro_data[1] = data_IMU.angular_velocity.y - self.u_delta_h[4]
+        self.gyro_data[2] = data_IMU.angular_velocity.z - self.u_delta_h[5]
+        
+        # Raw
+        self.gyro_raw[0] = data_IMU.angular_velocity.x
+        self.gyro_raw[1] = data_IMU.angular_velocity.y
+        self.gyro_raw[2] = data_IMU.angular_velocity.z
 
-        self.cal_posVel_predict(self.acc_data,quat_temp)
-        self.cal_quat_predict(self.gyro_data)
+
+        wq = data_IMU.orientation.w
+        xq = data_IMU.orientation.x
+        yq = data_IMU.orientation.y
+        zq = data_IMU.orientation.z
+        self.x_h[6] = wq
+        self.x_h[7] = xq
+        self.x_h[8] = yq
+        self.x_h[9] = zq
+        quat_temp = Quaternion(w_or_q=self.x_h[6],x=self.x_h[7],y=self.x_h[8],z=self.x_h[9])
+
+        
+
+        # Predict x_h
+        self.cal_posVel_predict(self.acc_data,quat_temp)                    #########################################
+        #self.cal_quat_predict(self.gyro_data)              #<<------------- TODO:NEEDS to be enabled when it's fixed ------------------
+                                                                            #########################################
+
 
         F = self.Fmatrix_update(self.acc_data,quat_temp)
 
         self.cal_P_predict(F)
 
+        # Part of the measurements average spoofing detection 
+        self.x_avg[self.x_i,:] = self.x_h[0:3]  # only position in this situation
+        self.x_i +=1
+        if self.x_i == self.window_size:
+            self.x_i = 0
+        
+
+
+        #wp=self.x_h[6]
+        #xp=self.x_h[7]
+        #yp=self.x_h[8]
+        #zp=self.x_h[9]
+        #xroll = atan2(2*(wp*xp+yp*zp),(1-2*(yp**2+zp**2)))
+        #ypitch = asin(2*(wp*yp-zp*xp))
+        #zyaw = atan2(2*(wp*zp+xp*yp),(1-2*(yp**2+zp**2)))
+        
+        np.set_printoptions(suppress=True,precision=8)
+        
+        
+        print('--KF position  --')
+        print(self.x_h[0:3])
+        print('--GPS position --')
+        print(self.sensorData)
+        print('-- vel --')
+        print(self.x_h[3:6])
+        print('--quat--')
+        print(self.x_h[6:10])
+        #print('-- quat Rot Matrix --')
+        #print(qprint.get_rot())
+        #print('in euler deg:')
+        #print('x/roll = ',xroll*(180/pi))
+        #print('y/pitch = ',ypitch*(180/pi))
+        #print('z/yaw = ',zyaw*(180/pi))
+        print('--chi--+method',self.spoofMethod)
+        print(self.qChi)
+        print('acc_raw')
+        print(self.acc_raw)
+        print('acc_raw after rotaion')
+        print(quat_temp.get_rot() @ self.acc_raw )
+        print('gyro_raw')
+        print(self.gyro_raw)
+        print('-- delta_u_hat--')
+        print(self.u_delta_h)
+        print('-- Time --')
+        print(self.time)
+        
+
+        self.write_to_csv_file_kalmanValidation('Prediction')
+
+        self.gyro_prev = self.gyro_data
+
     def correct_KF_GPS(self,data_GPS):
         
         self.update_dt(data_GPS)
-        #Correct GPS data to be NED or ENU (Decide z should point up or down) <- inside the function below
-        self.GeoToNED_old(data_GPS.latitude,data_GPS.longitude,data_GPS.altitude)
 
-        self.sensorData[0] = self.NED[0]
-        self.sensorData[1] = self.NED[1]
-        self.sensorData[2] = self.NED[2]
+        if (self.optiTrack == False):
+            self.sensorData[0] = data_GPS.pose.position.x
+            self.sensorData[1] = data_GPS.pose.position.y
+            self.sensorData[2] = data_GPS.pose.position.z
+        else:
+            self.GeoToNED_old(data_GPS.latitude,data_GPS.longitude,data_GPS.altitude)
+            self.sensorData[0] = self.NED[1]    #x
+            self.sensorData[1] = self.NED[0]    #y
+            self.sensorData[2] = self.NED[2]    #z (z are pointing downwards)
+
 
         self.cal_KF_gain()
-        self.x_h_correct(self.sensorData)
+        self.x_h_correct()
         self.cal_P_correct()
+
         # Is it need with P reset as mention in the literature?
+        
+        delta_angle=self.z[6:9]
+        self.resetP(delta_angle)
+        
+        #TODO:
+        if self.spoofMethod == ("Innovation_"):
+            self.qChi = self.chi_cal_innovation_method() 
+        if self.spoofMethod == ("Measurement_"):
+            self.qChi = self.chi_cal_measurement_method()
+        
+        
+        #print('============'+self.spoofMethod)
+        #print('chi =', self.qChi[0,0])
 
         self.pub_xhat_data_NEW(self.x_h)
 
-    def cal_KF_gain(self):
+        self.write_to_csv_file_kalmanValidation('Correction')
 
-        #ERROR after some time:
-
-        # LinAlgError: SVD did not converge
-
-        # K = P*H.T*inv(H*P*H.T+R)
-        s = np.dot(np.dot(self.H,self.P),self.H.T)+self.R
-        S = np.linalg.pinv(s)
-        self.K = np.dot(np.dot(self.P,self.H.T),S)
-
-    def x_h_correct(self,data):
+    def x_h_correct(self):
         
         x = np.zeros([9,1])
 
+        if self.optiTrack == False:
+            self.u_delta_h[2] = 0   # z-acceleration
+
         self.z = np.vstack((x,self.u_delta_h)) 
 
+        # This is done like that so the dimensions fits together self.x_h.shape=(10,1) normally
+        x_h_dimMatch = np.vstack((self.x_h,np.zeros([5,1])))
         
-        # This is done like that so the dimensions fits together self.x_h.shape=(9,1) normally
-        x_h_dimMatch= np.vstack((self.x_h,np.zeros([5,1])))
-        
+        #print('---- sensorData ----')
+        #print('pos-z',self.sensorData[2])
+        #print('vel-z',self.sensorData[5])
+
+        #print('-- z before correction --')
+        #print(self.z)
+
+
         # z = z + K*(sensorData - H*x_h)
-        self.z = self.z + np.dot(self.K,(self.sensorData - np.dot(self.H,x_h_dimMatch)))
+        self.z = self.z + self.K @ (self.sensorData - (self.H @ x_h_dimMatch))
+
+        #print('-- z after correction --')
+        #print(self.z)
+        #print('-- z[9:15]--')
+        #print(self.z[9:15])
 
 
+        if self.optiTrack == False:
+            self.z[2] = 0   # z-pos
+            self.z[5] = 0   # z-vel
+            self.z[11] = 0  #z-acc_bias noise
         delta_angle = self.z[6:9]
         self.add_pertubians(delta_angle)  
-        self.update_u_delta_h() # Remember the bias terms
+        #Updating u_delta_h:
+        self.u_delta_h = self.z[9:15]
 
     def add_pertubians(self,delta_angle):
+
 
         # position + speed
         self.x_h[0:6] = self.x_h[0:6] + self.z[0:6]
         
+        #Set the pos and speed to 0
+        if self.optiTrack == False:
+            self.x_h[2,0] = 0  #pos-z
+            self.x_h[5,0] = 0  #vel-z
+
+
+        # TODO: Pick wich one to pick Isaac or Joan sola approach
+        '''
         # Oriantation - This is from Isaacs formulations
-        qtemp = Quaternion(w=self.x_h[6],x=self.x_h[7],y=self.x_h[8],z=self.x_h[9])
-        qRot = qtemp.get_rot() 
+        q_error = Quaternion(w_or_q=self.x_h[6],x=self.x_h[7],y=self.x_h[8],z=self.x_h[9])
+        qRot = q_error.get_rot() 
         OMEGA = self.makeSkew(delta_angle)
         
         # correct the oriantation with small angels
         # R = (I_3 - OMEGA)*R
-        R = np.dot((np.eye(3)-OMEGA),qRot)
+        R = qRot @ (np.eye(3)-OMEGA)  ## normally is -> (np.eye(3)-OMEGA) @ qRot but this could be the reason due to Isaac uses JPL and not Hamilliton notation for quaternion   
 
         # Convert it rot matrix back to quaternions
-        qtemp = qtemp.rot_to_quat(R)._q
+        q_error = q_error.rot_to_quat(R)._q
+        self.x_h[6:10] = q_error
+        # END of Isaacs formulation
+        '''
 
-        self.x_h[6:10] = qtemp
+        # - This is form Joan Sola --------- TODO: Is delta_angle an angle or is it angle speed? else q1 = angle_speed*sin(angle/2)
+        #q_prev = Quaternion(w_or_q=self.x_h[6],x=self.x_h[7],y=self.x_h[8],z=self.x_h[9])
+        #q_error = Quaternion(w_or_q=1, x=delta_angle[0]*0.5, y=delta_angle[1]*0.5, z=delta_angle[2]*0.5)
+        # Correct quaternion with global error correction
+            # ---------- Decide if norm is needed? -----------
+        #self.x_h[6:10] = (q_error * q_prev).norm_quat()._q
+        #self.x_h[6:10] = (q_error * q_prev)._q
 
-    def update_u_delta_h(self):
-        self.u_delta_h = self.z[9:15]
+        # End of Joan Sola formulation
+
+    def cal_KF_gain(self):
+
+        #ERROR after some time when P is set to reset
+        # LinAlgError: SVD did not converge
+
+        # NOTE: Reason to error could be - (1) RAM issue -  (2) The matrix contains NaN or Inf
+        # NOTE: From test it looks like it was a RAM issue due to previuse experience this happend when Gazebo gui was running also (The PC 8GB of RAM) 
+
+        # K = P*H.T*inv(H*P*H.T+R)
+        s = self.H @ self.P @ self.H.T + self.R 
+        S = np.linalg.pinv(s)
+        self.K = self.P @ self.H.T @ S
 
     def cal_P_correct(self):
         
         I = np.eye(15)
-        # P = (I-KH)*P
-        self.P = np.dot(np.dot((I-self.K),self.H),self.P)
+        #P = (I-KH)*P <-- just how the formula is 
+        self.P = (I-self.K @ self.H) @ self.P
+
+        # Attemp for remove the error(SVD did not converge) in the function cal_KF_gain
+        #positive Joseph form is pick (p.63 bottom - Joan Sola)
+        #self.P =  (I-self.K @ self.H) @ self.P @ (I-self.K @ self.H).T + self.K @ self.R @ self.K.T
+
+
+
+        if self.optiTrack == False:
+            self.P[2,2] = 0 #pos-z
+            self.P[5,5] = 0 #vel-z
 
     def cal_P_predict(self,F):
-        # P = F*P*F.T + Q*dt
 
-        #self.P = F*self.P*F.T+self.Q*self.dt
-        self.P = np.dot(np.dot(F,self.P),F.T)+self.Q*self.dt
+        self.P = F @ self.P @ F.T + self.Q * self.dt
+
+        if self.optiTrack == False:
+            self.P[2,2] = 0 #pos-z
+            self.P[5,5] = 0 #vel-z
 
     def cal_posVel_predict(self,acc_raw,quat):
 
+        if self.optiTrack == False:
+            acc_raw[2] = 0
         
-        #self.P_num = self.P_num  + self.dt*self.V_num + self.dt^2 *0.5(self.quat_num.get_rot()*acc_raw-self.acc_bias-self.g)
-        #self.V_num = self.V_num + self.dt*(self.quat_num.get_rot()*acc_raw-self.acc_bias-self.g)
-
         # Transform it to global reference
-        u = quat.get_rot().dot(acc_raw)
+        R = quat.get_rot()
+        u_before = R @ (acc_raw)  
+
+        
+
 
         # Subtrackt gravity
-        u = u + self.g    
+        u = u_before + self.g
+
+        if self.optiTrack == False:
+            u[2] = 0    # z - setting to zero
+
+        '''
+        print('-- accelration before rotation --')
+        print(u_before)
+        print('-- accelration after rotation --')
+        print(u)
+        print('---Rot_quat---')
+        print(R)
+        '''
 
         # State-space model 
         A = np.eye(6)
-        A[0,3] = self.dt
-        A[1,4] = self.dt
-        A[2,5] = self.dt
+        A[0,3] = self.dt    # x
+        A[1,4] = self.dt    # y
+
         Bp = np.array((self.dt**2.0)/2.0*np.eye(3))
         Bv = np.array(self.dt*np.eye(3))
+
+        if self.optiTrack == True:
+            A[2,5] = self.dt        # z
+        else:
+            A[2,5] =  0 # state - pos-z
+            Bp[2,2] = 0 # input - pos-z
+            Bv[2,2] = 0 # input - vel-z
+
         B = np.vstack((Bp,Bv))
 
+
         # Position and velocity
-        self.x_h[0:6] = np.dot(A,self.x_h[0:6]) + B.dot(u)
+        self.x_h[0:6] = A @ self.x_h[0:6] + B @ u
+
+        # Sets pos+vel in the z-axis to 0 because it needs more work to be able to estimate the height
+        if self.optiTrack == False:
+            self.x_h[2] = 0    #pos-z
+            self.x_h[5] = 0    #vel-z
 
     def cal_quat_predict(self,gyro_raw):
         
-        w_norm = np.linalg.norm(gyro_raw)
-        I=np.eye(4)
-        OMEGA = self.get_OMEGA(gyro_raw)
+        #gyro_raw[2] = 0 # z - setting to 0
 
-        if(w_norm != 0.0):
-            self.x_h[6:10] = np.dot((cos(0.5*self.dt*w_norm)*I + (1/w_norm)*sin(0.5*self.dt*w_norm)*OMEGA)
-            ,self.x_h[6:10])
+        #xg = gyro_raw[0]
+        #yg = gyro_raw[1]
+        #zg = gyro_raw[2]
+
+        '''
+        avg_gyro = (gyro_raw + self.gyro_prev)/2
+
+        #TODO:
+        w_norm = np.linalg.norm(avg_gyro)
+        I=np.eye(4)
+        OMEGA = self.get_OMEGA(avg_gyro)
+
+        print('omega norm= ',w_norm)
+
+
+        if(w_norm >= 1e-8):#!= 0.0): # >=1e-8 instead of !=0.0?
+
+            self.x_h[6:10] = (cos(w_norm/2)*I + (1/w_norm)*sin(w_norm/2)*OMEGA) @ self.x_h[6:10]
+        '''
+        '''
+            w = cos(w_norm*self.dt/2)
+            x = sin(w_norm*self.dt/2)*xg/w_norm
+            y = sin(w_norm*self.dt/2)*yg/w_norm
+            z = sin(w_norm*self.dt/2)*zg/w_norm
+
+            qtemp = Quaternion(w_or_q=w,x=x,y=y,z=y)
+            qprev = Quaternion(w_or_q=self.x_h[6],x=self.x_h[7],y=self.x_h[8],z=self.x_h[9])
+            
+            qest = qtemp * qprev
+
+            self.x_h[6] = qest._q[0]     # w
+            self.x_h[7] = qest._q[1]    # x
+            self.x_h[8] = qest._q[2]    # y
+            self.x_h[9] = qest._q[3]    # z
+        '''
+        
+        #For debugging with the ground truth (topic /gazebo/model_states)
+        tmp_c = "iris"
+        for x in range(0,len(gyro_raw.name)):
+            if (gyro_raw.name[x] == tmp_c):
+                
+                #print('x=',x)
+                #print(gyro_raw.pose[x].orientation)
+
+                qx = gyro_raw.pose[x].orientation.x
+                qy = gyro_raw.pose[x].orientation.y
+                qz = gyro_raw.pose[x].orientation.z
+                qw = gyro_raw.pose[x].orientation.w
+
+                # For debugging 
+                self.x_h[6:10] =np.array((qw,qx,qy,qz)).reshape(4,-1) 
 
     def get_OMEGA(self,gyro_raw):
-        #This is right handed oriantation
+        
         x = gyro_raw[0]
         y = gyro_raw[1]
         z = gyro_raw[2]
 
         OMEGA = np.zeros((4,4))
 
-        OMEGA[0,0:4] = [0,-x,-y,z]
-        OMEGA[1,0:4] = [x,0,z,-y]
-        OMEGA[2,0:4] = [y,-z,0,x]
-        OMEGA[3,0:4] = [z,y,-x,0]
+        OMEGA[0,:] = [0,-x,-y,z]
+        OMEGA[1,:] = [x,0,z,-y]
+        OMEGA[2,:] = [y,-z,0,x]
+        OMEGA[3,:] = [z,y,-x,0]
 
         return OMEGA
 
@@ -534,11 +787,10 @@ class ES_EKF():
 
         return M
 
-    # The Noise matrix isn't included
     def Fmatrix_update(self,acc,quat):
 
         Qrot = quat.get_rot()
-        rotCrossMat = self.makeSkew(np.dot(Qrot,acc))
+        rotCrossMat = self.makeSkew(Qrot @ acc)
 
         I = np.eye(3)
         O = np.zeros((3,3))
@@ -554,7 +806,164 @@ class ES_EKF():
 
         F = np.eye(15)+F*self.dt
 
+        if self.optiTrack == False:
+            F[2,2] = 0 #pos-z
+            F[5,5] = 0 #vel-z
+
         return F
+
+    def write_to_csv_file_spoofing(self):
+        if self.write_csv == True:
+            
+            
+            if(self.spoofOn==True):
+                file_chi = open('Sp_ON_'+self.spoofMethod+self.fileName,'a')
+                
+                file_chi.write(str(self.qChi[0,0]) + "," + str(self.sensorData[0,0] - self.x_h[0,0])+ "," + str(self.sensorData[1,0] - self.x_h[1,0])+ "," + str(self.threshold) +"\n")
+                file_chi.close()
+
+            elif (self.spoofOn==False):
+                file_chi = open('Sp_OFF_'+self.spoofMethod+self.fileName,'a')
+
+                file_chi.write(str(self.qChi[0,0]) + "\n")
+                file_chi.close()
+
+            if(self.kalman_validation==True):
+                file_KF = open ('KalmanValidation_'+self.kalman_test_name+'.csv','a')
+
+                # Should there be a ground truth?
+
+                #pos_error_xyz(0:2)
+                file_KF.write(str(self.sensorData[0,0] - self.x_h[0,0])+ "," + str(self.sensorData[1,0] - self.x_h[1,0])+ "," + str(self.sensorData[2,0] - self.x_h[2,0])+ ",") 
+                #vel_xyz(3:5)
+                file_KF.write(str(self.x_h[3,0])+ "," + str(self.x_h[4,0])+ "," + str(self.x_h[5,0])+ ",")
+                #acc_bias_xyz(6:8)
+                file_KF.write(str(self.u_delta_h[0,0])+ "," + str(self.u_delta_h[1,0])+ "," + str(self.u_delta_h[2,0])+ ",")
+                #gyro_bias_xyz(9:11)
+                file_KF.write(str(self.u_delta_h[3,0])+ "," + str(self.u_delta_h[4,0])+ "," + str(self.u_delta_h[5,0])+ ",")
+                #raw_acc_xyz(12:14)
+                file_KF.write(str(self.acc_raw[0,0])+ "," + str(self.acc_raw[1,0])+ ","+str(self.acc_raw[2,0])+ "," )
+                #raw_gyro_xyz(15:17)
+                file_KF.write(str(self.gyro_raw[0,0])+ "," + str(self.gyro_raw[1,0])+ "," + str(self.gyro_raw[2,0])+",")
+                #quat_wxyz(18:21)
+                file_KF.write(str(self.x_h[6,0])+ "," +str(self.x_h[7,0])+ "," +str(self.x_h[8,0])+ "," +str(self.x_h[9,0])+",")
+                #Time in seconds(22)
+                file_KF.write(str(self.time))
+                file_KF.write("\n")
+                file_KF.close()
+
+    def write_to_csv_file_kalmanValidation(self,name_preOrCor):
+        if self.write_csv == True:
+            if(self.kalman_validation==True):
+                file_KF = open ('KalmanValidation_'+self.kalman_test_name +'_'+ name_preOrCor +'.csv','a')
+
+                # Should there be a ground truth?
+
+                #pos_error_xyz(0:2)
+                file_KF.write(str(self.sensorData[0,0] - self.x_h[0,0])+ "," + str(self.sensorData[1,0] - self.x_h[1,0])+ "," + str(self.sensorData[2,0] - self.x_h[2,0])+ ",") 
+                #vel_xyz(3:5)
+                file_KF.write(str(self.x_h[3,0])+ "," + str(self.x_h[4,0])+ "," + str(self.x_h[5,0])+ ",")
+                #acc_bias_xyz(6:8)
+                file_KF.write(str(self.u_delta_h[0,0])+ "," + str(self.u_delta_h[1,0])+ "," + str(self.u_delta_h[2,0])+ ",")
+                #gyro_bias_xyz(9:11)
+                file_KF.write(str(self.u_delta_h[3,0])+ "," + str(self.u_delta_h[4,0])+ "," + str(self.u_delta_h[5,0])+ ",")
+                #raw_acc_xyz(12:14)
+                file_KF.write(str(self.acc_raw[0,0])+ "," + str(self.acc_raw[1,0])+ ","+str(self.acc_raw[2,0])+ "," )
+                #raw_gyro_xyz(15:17)
+                file_KF.write(str(self.gyro_raw[0,0])+ "," + str(self.gyro_raw[1,0])+ "," + str(self.gyro_raw[2,0])+",")
+                #quat_wxyz(18:21)
+                file_KF.write(str(self.x_h[6,0])+ "," +str(self.x_h[7,0])+ "," +str(self.x_h[8,0])+ "," +str(self.x_h[9,0])+",")
+                #Time in seconds(22)
+                file_KF.write(str(self.time))
+                file_KF.write("\n")
+                file_KF.close()
+    
+    #This created an unstable solution, due to overflow (data type). Assumed the number gets to small
+    # Look at the bottom of page p.63 from joan paper, this could solve the numerical issue
+    def resetP(self,angle_error):
+
+
+        #print('ang_error= ')
+        #print(angle_error)
+        # Create the reset terms for the position and velocity
+        O6x9 = np.zeros([6,9])
+        g_PV = np.eye(6)
+        g_PV = np.hstack((g_PV,O6x9))
+
+        # Create the reset terms for the small angle change.NOTE: This is for Global anglular error not Local
+        O3x6 = np.zeros([3,6])
+        g_angle = np.eye(3) + self.makeSkew(0.5*angle_error)
+        #print('g_angle=   ')
+        #print(g_angle)
+        g_angle = np.hstack((O3x6, g_angle ,O3x6))
+
+        #Create the reset terms for the sensor bias term(only angular speed and acceleration bias is used)(6x15)
+        g_bias = np.eye(6)
+        g_bias = np.hstack((O6x9,g_bias))
+
+        #Create the reset matrix (15x15)
+        G = np.concatenate((g_PV, g_angle, g_bias),axis=0)
+
+        # Reset the P(Cov matrix)
+        self.P = G @ self.P @ G.T
+
+    #Not done
+    def groundTruth(self,data):
+        pass
+
+###################
+# Spoof detection #
+###################
+
+
+#https://ieeexplore-ieee-org.proxy1-bib.sdu.dk/document/8654615
+
+    # Measurements method
+    def chi_cal_measurement_method(self):
+        
+        self.z_avg[self.z_i, :] = self.sensorData
+        self.z_i += 1
+        if self.z_i == self.window_size:  # Holding the window size for measurement
+            self.z_i = 0
+
+        '''
+        print('=======z_avg')
+        print(np.sum(self.z_avg,axis=0)/self.window_size)
+        print('=======x_avg')
+        print((np.sum(self.x_avg,axis=0)/self.window_size))
+        '''
+
+        gamma = np.sum(self.z_avg,axis=0)/self.window_size - ((np.sum(self.x_avg,axis=0)/self.window_size) ) # eq. (38) 
+        P_gamma = self.H @ self.P @ self.H.T + self.R/self.window_size # eq. (13)   TODO: re-write this  so it takes the average for the state, into account
+        q = gamma.T @ np.linalg.pinv(P_gamma) @ gamma                  # eq. (14)
+        
+
+        return q
+
+    # Innovation method
+    def chi_cal_innovation_method(self):
+        
+        # This is done like that so the dimensions fits together self.x_h.shape=(10,1) normally
+        x_h_dimMatch = np.vstack((self.x_h,np.zeros([5,1])))
+        gamma = self.sensorData - (self.H @ x_h_dimMatch) # eq. (11)
+
+        self.gamma_array[self.P_i,:] =  gamma
+        P_gamma = self.H @ self.P @ self.H.T + self.R/self.window_size# eq. (13) + eq. (28)
+
+        self.P_inv_gamma_array[self.P_i,:] = np.linalg.pinv(P_gamma)
+
+        P_inv_avg = np.sum(self.P_inv_gamma_array , axis=0) # eq.41
+
+        gamma_avg = np.linalg.pinv(P_inv_avg) @ np.sum(self.P_inv_gamma_array @ self.gamma_array,axis=0) # eq.42
+
+        q_inn_avg = gamma_avg.T @ P_inv_avg @ gamma_avg # eq. 43
+
+        self.P_i += 1
+        if self.P_i == self.window_size:  # Holding the window size for cov-matrix
+            self.P_i = 0 
+        
+        return q_inn_avg
+
 
 
 if __name__ == '__main__':

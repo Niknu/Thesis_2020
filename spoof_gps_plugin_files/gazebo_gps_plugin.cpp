@@ -223,6 +223,8 @@ void GpsPlugin::Load(sensors::SensorPtr _parent, sdf::ElementPtr _sdf)
 
   gps_sub = n.subscribe("fake_gps/offset", 1, &GpsPlugin::gps_cb, this);
   gps_sub_inc = n.subscribe("fake_gps/offset_inc", 1, &GpsPlugin::gps_cb_inc, this);
+  
+  spoofing_signal = n.advertise<std_msgs::Bool>("fake_gps/spoofing_active_signal",1);
 }
 
 void GpsPlugin::OnWorldUpdate(const common::UpdateInfo& /*_info*/)
@@ -350,6 +352,8 @@ void GpsPlugin::gps_cb(const geographic_msgs::GeoPoint::ConstPtr& msg)
   offset_latitude_ = msg->latitude;
   offset_longitude_ = msg->longitude;
   offset_altitude_ = msg->altitude;
+
+  checking_gps_spoofing_active(offset_latitude_,offset_longitude_,offset_altitude_);
 }
 
 void GpsPlugin::gps_cb_inc(const geographic_msgs::GeoPoint::ConstPtr& msg)
@@ -357,8 +361,22 @@ void GpsPlugin::gps_cb_inc(const geographic_msgs::GeoPoint::ConstPtr& msg)
   offset_latitude_ = offset_latitude_ + msg->latitude;
   offset_longitude_ = offset_longitude_ + msg->longitude;
   offset_altitude_ = offset_altitude_ + msg->altitude;
+
+  checking_gps_spoofing_active(offset_latitude_,offset_longitude_,offset_altitude_);
+
 }
 
+void GpsPlugin::checking_gps_spoofing_active(const double off_lat,const double off_lon,const double off_alt)
+{
+  if((off_lat + off_lon + off_alt) == 0 )
+  {
+    spoofing_signal_active_.data = false;
+  }
+  else
+  {
+    spoofing_signal_active_.data = true;
+  }
+}
 
 void GpsPlugin::OnSensorUpdate()
 {
@@ -408,6 +426,7 @@ void GpsPlugin::OnSensorUpdate()
     msg.satellites_visible = 10;
 
     gps_ros_pub.publish(msg);
+    spoofing_signal.publish(spoofing_signal_active_);
 
     ros::spinOnce();
   }
