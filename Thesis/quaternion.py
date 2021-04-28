@@ -31,15 +31,15 @@ class Quaternion:
         :param y: The second imaginary part if w_or_q is a scalar
         :param z: The third imaginary part if w_or_q is a scalar
         """
-        self._q = np.array([1, 0, 0, 0])
+        self._q = np.array([1, 0, 0, 0],dtype=np.float64)
 
         if x is not None and y is not None and z is not None:
             w = w_or_q
-            q = np.array([w, x, y, z])
+            q = np.array([w, x, y, z],dtype=np.float64)
         elif isinstance(w_or_q, Quaternion):
-            q = np.array(w_or_q.q)
+            q = np.array(w_or_q.q,dtype=np.float64)
         else:
-            q = np.array(w_or_q)
+            q = np.array(w_or_q,dtype=np.float64)
             if len(q) != 4:
                 raise ValueError("Expecting a 4-element array or w x y z as parameters")
 
