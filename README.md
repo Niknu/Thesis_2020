@@ -47,24 +47,19 @@ In this folder contains the 4 files. 2 of them is to spoof and 2 others is to se
 When all is installed and the files from the **spoof_gps_plugin_files** is placed the currect place can two environments be launched
 
 The SITL GNSS environments - 2 terminal windows shall be used for this
-* Terminal 1: 
-´´´
-roslaunch px4 posix_sitl.launch vehicle:=iri 
-´´´
-* Terminal 2: 
-´´´
-roslaunch mavros px4.launch fcu_url:="udp://:14540@127.0.0.1:14557" 
-´´´
+* Terminal 1: ``` roslaunch px4 posix_sitl.launch vehicle:=iri ```
+
+* Terminal 2: ``` roslaunch mavros px4.launch fcu_url:="udp://:14540@127.0.0.1:14557" ```
 
 The SITL OptiTrack environments - 2 terminal windows shall be used for this
 
-* Terminal 1: ´´´roslaunch mavros px4.launch fcu_url:="udp://:14540@127.0.0.1:14580" ´´´
-* Terminal 2: ´´´roslaunch px4 posix_sitl.launch vehicle:=iris_optitrack ´´´
+* Terminal 1: ```roslaunch mavros px4.launch fcu_url:="udp://:14540@127.0.0.1:14580" ```
+* Terminal 2: ```roslaunch px4 posix_sitl.launch vehicle:=iris_optitrack ```
 
 When the one of the environment is launch the ES-EKF.py can be launch
 
 Inside of the **ES-EKF.py** is the variable **self.optiTrack** to be set inside the program as:
-* ´´´self.optiTrack = False´´´ - When SITL GNSS is used.
-* ´´´self.optiTrack = True´´´ - when OptiTrack is used also when it's simulation.
+* ```self.optiTrack = False``` - When SITL GNSS is used.
+* ```self.optiTrack = True``` - when OptiTrack is used also when it's simulation.
 
 
