@@ -52,10 +52,10 @@ class ES_EKF():
 
         self.write_csv = True
         self.logGT = True
-        self.spoofOn = False # normal bool value 
+        self.spoofOn = True # normal bool value 
         
         self.spoofMethod = "Measurement"+"_"  #Measurement or Innovation (Cov_matrix)
-        self.fileName = 'SITL_GNSS_4point5rounds' #'SITL_OptiTrack_straightLine_spoofing_01'#'OptiTrack_grond2squareValidate_KF_5rounds' #'AtoB_11_with_quat_rot_global' # ground_spoofing
+        self.fileName = 'SITL_OptiTrack_straightLine_spoofing_15' #'SITL_OptiTrack_straightLine_spoofing_01'#'OptiTrack_grond2squareValidate_KF_5rounds' #'AtoB_11_with_quat_rot_global' # ground_spoofing
 
         self.kalman_validation = True
         self.kalman_test_name = 'GPS_Qdefault_'+ self.fileName
@@ -94,7 +94,7 @@ class ES_EKF():
         #   OptiTrack    #
         ##################
         self.optiTrack_real = False
-        self.optiTrack = False  # True when optiTrack used - sets Q and R different depending on  + TODO: add or remove z-pos estimation(sets to 0)
+        self.optiTrack = True  # True when optiTrack used - sets Q and R different depending on  + TODO: add or remove z-pos estimation(sets to 0)
         self.setZaxisTo0 = True # sets all the variables with z = 0
         self.optiTrack_pos_0 = np.zeros([3,1])
         self.optiTrack_pos_first = True
@@ -265,7 +265,10 @@ class ES_EKF():
 
         #rospy.Subscriber('/mavros/altitude',Altitude, self.update_z) # This isn't used
         rospy.Subscriber('/mavros/imu/data_raw',Imu, self.prediction_KF_IMU)
-        rospy.Subscriber('/spoofing_active_signal',Bool,self.reading_active_spoofing)
+        if self.optiTrack == True:
+            rospy.Subscriber('/spoofing_active_signal',Bool,self.reading_active_spoofing)
+        else:
+            rospy.Subscriber('/fake_gps/spoofing_active_signal',Bool,self.reading_active_spoofing)
 
         #self.madgwick_sub = ApproximateTimeSynchronizer([self.mag_data,self.imu_data],1,1)
         #self.madgwick_sub.registerCallback(self.madgwickFilter_callback)
@@ -597,16 +600,11 @@ class ES_EKF():
             # resetP shouldn't be used if angle delta_angle is too big. This reason behind the delta_angle gets too big is because the kalman gain, that is set by the cov matrix self.P
             pass
         
-        # If it's need decide which method should be used
-        '''
-        if self.spoofMethod == ("Innovation_"):
-            self.qChi = self.chi_cal_innovation_method() 
-        if self.spoofMethod == ("Measurement_"):
-            self.qChi = self.chi_cal_measurement_method()
-        '''
-        self.qChi_innv = self.chi_cal_innovation_method() 
+
+
+        self.qChi_innv = self.chi_cal_innovation_method_avg() 
         
-        self.qChi_meas = self.chi_cal_measurement_method()
+        self.qChi_meas = self.chi_cal_measurement_method_avg()
         
         
         #print('============'+self.spoofMethod)
@@ -1132,6 +1130,30 @@ class ES_EKF():
 #https://ieeexplore-ieee-org.proxy1-bib.sdu.dk/document/8654615
 
     # Measurements method From https://ieeexplore-ieee-org.proxy1-bib.sdu.dk/document/8654615
+    def chi_cal_measurement_method_avg(self):
+        
+        self.z_avg[self.z_i, :] = self.sensorData
+        self.z_i += 1
+        if self.z_i == self.window_size:  # Holding the window size for measurement
+            self.z_i = 0
+
+        # Part of the measurements average spoofing detection 
+        self.x_avg[self.x_i,:] = self.x_h[0:3]  # only position in this situation
+        self.x_i +=1
+        if self.x_i == self.window_size:
+            self.x_i = 0
+
+        #x_h_dimMatch = np.vstack((self.x_h,np.zeros([5,1]))) # This is done like that so the dimensions fits together self.x_h.shape=(10,1) normally
+
+        gamma = np.sum(self.z_avg,axis=0)/self.window_size - ((np.sum(self.x_avg,axis=0)/self.window_size) ) # eq. (38)
+        #gamma = self.sensorData - (self.H @ x_h_dimMatch) # eq. (11)
+
+        P_gamma = self.H @ self.P @ self.H.T + (self.R/self.window_size) # eq. (13)   TODO: re-write this  so it takes the average for the state, into account
+        q = gamma.T @ np.linalg.pinv(P_gamma) @ gamma                  # eq. (14)
+        
+
+        return q
+
     def chi_cal_measurement_method(self):
         
         self.z_avg[self.z_i, :] = self.sensorData
@@ -1145,27 +1167,21 @@ class ES_EKF():
         if self.x_i == self.window_size:
             self.x_i = 0
 
-
-        '''
-        print('=======z_avg')
-        print(np.sum(self.z_avg,axis=0)/self.window_size)
-        print('=======x_avg')
-        print((np.sum(self.x_avg,axis=0)/self.window_size))
-        '''
-
         #x_h_dimMatch = np.vstack((self.x_h,np.zeros([5,1]))) # This is done like that so the dimensions fits together self.x_h.shape=(10,1) normally
 
-        gamma = np.sum(self.z_avg,axis=0)/self.window_size - ((np.sum(self.x_avg,axis=0)/self.window_size) ) # eq. (38)
+        gamma = self.sensorData - self.x_h[0:3] # eq. (38)
         #gamma = self.sensorData - (self.H @ x_h_dimMatch) # eq. (11)
 
-        P_gamma = self.H @ self.P @ self.H.T + (self.R/self.window_size) # eq. (13)   TODO: re-write this  so it takes the average for the state, into account
+        P_gamma = self.H @ self.P @ self.H.T + self.R # eq. (13)   TODO: re-write this  so it takes the average for the state, into account
         q = gamma.T @ np.linalg.pinv(P_gamma) @ gamma                  # eq. (14)
         
 
         return q
 
+
+
     # Innovation method From https://ieeexplore-ieee-org.proxy1-bib.sdu.dk/document/8654615 
-    def chi_cal_innovation_method(self):
+    def chi_cal_innovation_method_avg(self):
         
         # This is done like that so the dimensions fits together self.x_h.shape=(10,1) normally
         x_h_dimMatch = np.vstack((self.x_h,np.zeros([5,1])))
@@ -1197,3 +1213,4 @@ if __name__ == '__main__':
         print (e)
 
 
+initilized

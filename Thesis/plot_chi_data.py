@@ -37,9 +37,10 @@ OptiTrack_data= 'Thesis/OptiTrack/'
 SITL_OptiTrack_data = 'Thesis/SITL_OptiTrack'
 #PX4_GNSS = 'Thesis/PX4_GNSS'
 
-plot_no = 2 # Plot
-env_no = 0  # Enviorment 
-
+plot_no = 0 # Plot
+env_no = 1  # Enviorment 
+spoofing = True
+spoofing_signal_plot = True
 
 if env_no == 0:
     env_name = ' OptiTrack'
@@ -55,9 +56,12 @@ elif env_no == 2:
 
 
 
-chi_data_path = 'Thesis/Data/KF_validation/OptiTrack/Sp_OFF_OptiTrack_KalmanFilter_4point5rounds'
-kalman_data_Path    = 'Thesis/Data/KF_validation/OptiTrack/KalmanValidation_GPS_Qdefault_OptiTrack_KalmanFilter_4point5rounds_Correction'
-ground_truth_data   = 'Thesis/Data/KF_validation/OptiTrack/Kalman_posVsGPSVsGroundTruth_OptiTrack_KalmanFilter_4point5rounds'
+ground_truth_data = 'Kalman_posVsGPSVsGroundTruth_SITL_OptiTrack_straightLine_spoofing_15'
+kalman_data_Path    = 'KalmanValidation_GPS_Qdefault_SITL_OptiTrack_straightLine_spoofing_15_Correction'
+chi_data_path  = 'Sp_ON_SITL_OptiTrack_straightLine_spoofing_15'
+
+spoof_drift = chi_data_path[-2]+'.'+chi_data_path[-1]
+
 
 matlab_time = 'Isaac_data/in_time'+'.csv'
 matlab_gyro = 'Isaac_data/in_gyro' +'.csv'
@@ -162,7 +166,7 @@ if plot_no == 0: # chi square data
 
     ax[0].legend(['q$_{measurement}$','T$_d$'])
     ax[1].legend(['q$_{innovation}$','T$_d$'])
-    ax[2].legend(['Signal'])
+    ax[2].legend(['Signal$_{'+spoof_drift+'}$'])
 
 
     ax[0].set_title('Chi Measurement')
@@ -170,10 +174,15 @@ if plot_no == 0: # chi square data
     ax[2].set_title('When spoofing is happening')
 
     
-    #ax[0].set_ylim([0,y_max])
-    #ax[1].set_ylim([0,y_max])
+    ax[0].set_ylim([0,40.0])
+    ax[1].set_ylim([0,40.0])
     #ax[2].set_ylim([-0.01,1.1])
 
+    ax[0].set_yticks(np.arange(0, 40+1, 5))
+    ax[1].set_yticks(np.arange(0, 40+1, 5))
+
+    ax[0].grid()
+    ax[1].grid()
     ax_his[1].set_xlabel('Values of q ')
     ax[2].set_xlabel('Time [s]')
 
@@ -182,7 +191,7 @@ if plot_no == 0: # chi square data
     fig_time.suptitle('Timeline of the q-value -'+env_name,fontsize=16)
 
     fig_his.savefig('LikelihoodForQ'+fig_end+'.eps',format='eps')
-    fig_time.savefig('TimeLineOfQ'+fig_end+'.eps',format='eps')
+    fig_time.savefig('TimeLineOfQ'+fig_end+spoof_drift+'.eps',format='eps')
 
     plt.show()
 elif plot_no == 1: # Kalman Estimation
@@ -343,10 +352,9 @@ elif plot_no == 1: # Kalman Estimation
     axis_gyro[3].plot(time,delta_angle_x,time,delta_angle_y,time,delta_angle_z)
 
 
-    for x in range(0,N_sen):
-        axis_acc[x].legend(['x','y','z'])
-        axis_gyro[x].legend(['x','y','z'])
-    axis_gyro[3].legend(['x','y','z'])
+    
+    axis_acc[0].legend(['x','y','z'],loc='center left', bbox_to_anchor=(1, 0.5))
+    axis_gyro[0].legend(['x','y','z'],loc='center left', bbox_to_anchor=(1, 0.5))
 
 
     axis_acc[0].set_title("Acceleration raw")
@@ -414,11 +422,20 @@ elif plot_no == 1: # Kalman Estimation
     axis_cov[3].set_ylabel(r'[$\frac{m}{s^2}$] ')
     axis_cov[4].set_ylabel(r'[$\frac{rad}{s}$]  ')
     
-    for i in range(N_cov):
-        axis_cov[i].legend(['x','y','z'] , loc='upper right')
+    
+    axis_cov[0].legend(['x','y','z'] ,loc='center left', bbox_to_anchor=(1, 0.5))
 
     axis_cov[4].set_xlabel('Time [s]')
     fig_cov.suptitle('The estimation of the std. dev -' + env_name, fontsize=16)
+
+
+    axis_cov[0].set_yticks(np.arange(0, max(3*cov_pos_y)+1, 1.0))
+    axis_cov[1].set_yticks(np.arange(0, max(3*cov_vel_y)+1, 2.0))
+    axis_cov[2].set_yticks(np.arange(0, max(3*cov_angle_y)+1, 20.0))
+    axis_cov[3].set_yticks(np.arange(0, max(3*cov_acc_bias_y)+1, 2.0))
+    axis_cov[4].set_yticks(np.arange(0, max(3*cov_gyro_bias_y)+1, 2.0))
+
+
 
     for n in range(0,N_sen):
         axis_acc[n].grid()
@@ -433,20 +450,23 @@ elif plot_no == 1: # Kalman Estimation
         axis_est[n].grid()
     
 
+
     
-    fig_acc.savefig('Gyro'+fig_end+'.eps',format='eps')
-    fig_gyro.savefig('Acc'+fig_end+'.eps',format='eps')
+    fig_acc.savefig('Acc'+fig_end+'.eps',format='eps')
+    fig_gyro.savefig('Gyro'+fig_end+'.eps',format='eps')
     fig_cov.savefig('Cov_est'+fig_end+'.eps',format='eps')
     
     
+    plt.tight_layout()
     
     plt.show()
 
 elif plot_no == 2: # Ground Truth
 
-    OptiTrack = True
+    
+    
 
-    if OptiTrack == True:
+    if env_no != 2:
         # OptiTrack
         waypoint_x = np.array((0,0,2,2))
         waypoint_y = np.array((0,2,2,0))
@@ -508,7 +528,8 @@ elif plot_no == 2: # Ground Truth
 
 
     ax[2].plot(kfX,kfY,gpsX,gpsY,gtX,gtY)
-    ax[2].plot(waypoint_x,waypoint_y, marker='*',linestyle='None',color='k')
+    if spoofing == False:
+        ax[2].plot(waypoint_x,waypoint_y, marker='*',linestyle='None',color='k')
 
 
     
@@ -547,20 +568,32 @@ elif plot_no == 2: # Ground Truth
     M_pos=1
     N_pos=1
 
-    fig_pos, ax_pos = plt.subplots(N_pos,M_pos,sharex=True)
+    fig_pos, ax_pos = plt.subplots(N_pos,M_pos)
 
 
     ax_pos.plot(kfX,kfY,gpsX,gpsY,gtX,gtY)
-    
-    ax_pos.plot(waypoint_x,waypoint_y, marker='*',linestyle='None',color='k')
+
+
+    if spoofing == False:
+        ax_pos.plot(waypoint_x,waypoint_y, marker='*',linestyle='None',color='k')
+    elif spoofing_signal_plot == True:
+        ax_pos.plot(gtX,-gtY+gpsY,marker=',',color='k')
+
 
     ax_pos.set_title('Position')
-    ax_pos.legend(['ES-EKF','GPS','GT','Waypoints'])
+    
+    if spoofing == False:
+        ax_pos.legend(['ES-EKF','GPS','GT','Waypoints'])
+    elif spoofing_signal_plot == True:
+        ax_pos.legend(['ES-EKF','GPS','GT',r'Spoofing Signal$_{'+spoof_drift+'}$'],loc='lower left',bbox_to_anchor=(0.0, 0.)) #bbox_to_anchor=(0.75, 0.)
+    else:
+        ax_pos.legend(['ES-EKF','GPS','GT'])
+
+    if np.max(gtY)<1:
+        ax_pos.set_ylim([-1,1])
 
     ax_pos.set_xlabel('x [m]')
     ax_pos.set_ylabel('y [m]')
-
-    ax_pos.set_xlabel('time [s]')
     
     ax_pos.grid()
 
@@ -585,9 +618,10 @@ elif plot_no == 2: # Ground Truth
     ax_quat[3].set_title('Quaternion value z')
 
     for n in range(0,N_quat):
-        ax_quat[n].legend(['GT','ES-EKF'])
         ax_quat[n].grid()
     
+    
+    ax_quat[0].legend(['GT','ES-EKF'],loc='lower left', bbox_to_anchor=(0.0, 0.5))
 
     ax_quat[3].set_xlabel('Time [s]')
     
@@ -612,9 +646,8 @@ elif plot_no == 2: # Ground Truth
     ax_ang[2].set_xlabel('time [s]')
 
 
-    ax_ang[0].legend(['ES-EKF','gt'])
-    ax_ang[1].legend(['ES-EKF','gt'])
-    ax_ang[2].legend(['ES-EKF','gt'])
+    ax_ang[0].legend(['ES-EKF','gt'],loc='lower left', bbox_to_anchor=(0.0, 0.7))
+
 
 
     for n in range(0,M):
@@ -649,9 +682,8 @@ elif plot_no == 2: # Ground Truth
 
     ax_speed[1].set_xlabel('time [s]')
 
-    ax_speed[0].legend(['GT','ES-EKF'])
-    ax_speed[1].legend(['GT','ES-EKF'])
-    #ax_speed[2].legend(['GT','ES-EKF'])
+    ax_speed[0].legend(['GT','ES-EKF'],loc='lower right', bbox_to_anchor=(1.0, 0.7))
+    
 
 
     for n in range(0,M-1):
@@ -659,32 +691,53 @@ elif plot_no == 2: # Ground Truth
 
     fig_speed.suptitle('Speed of the drone -' + env_name, fontsize=16)
 
-    ####----------------------  RMSE calculation  ---------------------------------###
+    ####----------------------  RMSE+MEA calculation  ---------------------------------###
 
     # Pos
-    RMSE_pos_KFvsGPS_x =  np.sqrt(np.sum((kfX - gpsX)**2))
-    RMSE_pos_KFvsGPS_y =  np.sqrt(np.sum((kfY - gpsY)**2))
+    n = len(kfX)
+    RMSE_pos_KFvsGPS_x =  np.sqrt((1/n)*np.sum((kfX - gpsX)**2))
+    RMSE_pos_KFvsGPS_y =  np.sqrt((1/n)*np.sum((kfY - gpsY)**2))
 
-    RMSE_pos_KFvsGT_x =  np.sqrt(np.sum((kfX - gtX)**2))
-    RMSE_pos_KFvsGT_y =  np.sqrt(np.sum((kfY - gtY)**2))
+    RMSE_pos_KFvsGT_x =  np.sqrt((1/n)*np.sum((kfX - gtX)**2))
+    RMSE_pos_KFvsGT_y =  np.sqrt((1/n)*np.sum((kfY - gtY)**2))
     
-
     #speed
-    RMSE_speed_KFvsGT_x = np.sqrt(np.sum((kf_speed_x - gt_speed_x)**2))
-    RMSE_speed_KFvsGT_y = np.sqrt(np.sum((kf_speed_y - gt_speed_y)**2))
-    #RMSE_speed_KFvsGT_z = np.sqrt(np.sum((kf_speed_z - gt_speed_z)**2))
+    RMSE_speed_KFvsGT_x = np.sqrt((1/n)*np.sum((kf_speed_x - gt_speed_x)**2))
+    RMSE_speed_KFvsGT_y = np.sqrt((1/n)*np.sum((kf_speed_y - gt_speed_y)**2))
+    #RMSE_speed_KFvsGT_z = np.sqrt((1/n)*np.sum((kf_speed_z - gt_speed_z)**2))
 
 
     #quat
-    RMSE_quat_KFvsGT_w = np.sqrt(np.sum((KF_quat_w - gt_quat_w)**2))
-    RMSE_quat_KFvsGT_x = np.sqrt(np.sum((KF_quat_x - gt_quat_x)**2))
-    RMSE_quat_KFvsGT_y = np.sqrt(np.sum((KF_quat_y - gt_quat_y)**2))
-    RMSE_quat_KFvsGT_z = np.sqrt(np.sum((KF_quat_z - gt_quat_z)**2))
+    RMSE_quat_KFvsGT_w = np.sqrt((1/n)*np.sum((KF_quat_w - gt_quat_w)**2))
+    RMSE_quat_KFvsGT_x = np.sqrt((1/n)*np.sum((KF_quat_x - gt_quat_x)**2))
+    RMSE_quat_KFvsGT_y = np.sqrt((1/n)*np.sum((KF_quat_y - gt_quat_y)**2))
+    RMSE_quat_KFvsGT_z = np.sqrt((1/n)*np.sum((KF_quat_z - gt_quat_z)**2))
 
     #euler
-    RMSE_euler_KFvsGT_x = np.sqrt(np.sum((KF_xroll - gt_xroll)**2))
-    RMSE_euler_KFvsGT_y = np.sqrt(np.sum((KF_ypitch - gt_ypitch)**2))
-    RMSE_euler_KFvsGT_z = np.sqrt(np.sum((KF_zyaw - gt_zyaw)**2))
+    RMSE_euler_KFvsGT_x = np.sqrt((1/n)*np.sum((KF_xroll - gt_xroll)**2))
+    RMSE_euler_KFvsGT_y = np.sqrt((1/n)*np.sum((KF_ypitch - gt_ypitch)**2))
+    RMSE_euler_KFvsGT_z = np.sqrt((1/n)*np.sum((KF_zyaw - gt_zyaw)**2))
+
+    # ------------------------ MEA ---------------------------------------
+    # Pos
+    n = len(kfX)
+    MEA_pos_KFvsGPS_x =  (1/n)*np.sum(np.abs(kfX - gpsX))
+    MEA_pos_KFvsGPS_y =  (1/n)*np.sum(np.abs(kfY - gpsY))
+
+    MEA_pos_KFvsGT_x =  (1/n)*np.sum(np.abs(kfX - gtX))
+    MEA_pos_KFvsGT_y =  (1/n)*np.sum(np.abs(kfY - gtY))
+    #speed
+    MEA_speed_KFvsGT_x = (1/n)*np.sum(np.abs(kf_speed_x - gt_speed_x))
+    MEA_speed_KFvsGT_y = (1/n)*np.sum(np.abs(kf_speed_y - gt_speed_y))
+    #quat
+    MEA_quat_KFvsGT_w = (1/n)*np.sum(np.abs(KF_quat_w - gt_quat_w))
+    MEA_quat_KFvsGT_x = (1/n)*np.sum(np.abs(KF_quat_x - gt_quat_x))
+    MEA_quat_KFvsGT_y = (1/n)*np.sum(np.abs(KF_quat_y - gt_quat_y))
+    MEA_quat_KFvsGT_z = (1/n)*np.sum(np.abs(KF_quat_z - gt_quat_z))
+    #euler
+    MEA_euler_KFvsGT_x = (1/n)*np.sum(np.abs(KF_xroll - gt_xroll))
+    MEA_euler_KFvsGT_y = (1/n)*np.sum(np.abs(KF_ypitch - gt_ypitch))
+    MEA_euler_KFvsGT_z = (1/n)*np.sum(np.abs(KF_zyaw - gt_zyaw))
     
 
     print('pos_x: KF vs GPS  RMSE= ',RMSE_pos_KFvsGPS_x)
@@ -704,10 +757,34 @@ elif plot_no == 2: # Ground Truth
     print('euler_x RMSE= ',RMSE_euler_KFvsGT_x)
     print('euler_y RMSE= ',RMSE_euler_KFvsGT_y)
     print('euler_z RMSE= ',RMSE_euler_KFvsGT_z)
+    print('')
+    print('--- MEA ---')
+    print('')
+    print('pos_x: KF vs GPS  MEA= ',MEA_pos_KFvsGPS_x)
+    print('pos_y: KF vs GPS  MEA= ',MEA_pos_KFvsGPS_y)
+    print('pos_x: KF vs GT   MEA= ',MEA_pos_KFvsGT_x)
+    print('pos_y: KF vs GT   MEA= ',MEA_pos_KFvsGT_y)
+    print('')
+    print('speed_x: KF vs GT MEA= ',MEA_speed_KFvsGT_x)
+    print('speed_y: KF vs GT MEA= ',MEA_speed_KFvsGT_y)
+    #print('speed_z: KF vs GT MEA= ',MEA_speed_KFvsGT_z)
+    print('')
+    print('quat_w MEA= ',MEA_quat_KFvsGT_w)
+    print('quat_x MEA= ',MEA_quat_KFvsGT_x)
+    print('quat_y MEA= ',MEA_quat_KFvsGT_y)
+    print('quat_z MEA= ',MEA_quat_KFvsGT_z)
+    print('')
+    print('euler_x MEA= ',MEA_euler_KFvsGT_x)
+    print('euler_y MEA= ',MEA_euler_KFvsGT_y)
+    print('euler_z MEA= ',MEA_euler_KFvsGT_z)
+
+
+
+
 
 
     # ---------- Saving files into eps format
-    fig_pos.savefig('path'+fig_end+'.eps',format='eps')
+    fig_pos.savefig('path'+fig_end+'_'+ground_truth_data[-2:]+'.eps',format='eps')
     fig_quat.savefig('quat'+fig_end+'.eps',format='eps')
     fig_ang.savefig('orientation'+fig_end+'.eps',format='eps')
     fig_speed.savefig('speed'+fig_end+'.eps',format='eps')

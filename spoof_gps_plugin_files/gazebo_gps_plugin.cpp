@@ -368,13 +368,14 @@ void GpsPlugin::gps_cb_inc(const geographic_msgs::GeoPoint::ConstPtr& msg)
 
 void GpsPlugin::checking_gps_spoofing_active(const double off_lat,const double off_lon,const double off_alt)
 {
-  if((off_lat + off_lon + off_alt) == 0 )
+  const double threash_value = 0.0;
+  if((off_lat + off_lon + off_alt) != threash_value )
   {
-    spoofing_signal_active_.data = false;
+    spoofing_signal_active_.data = true;
   }
   else
   {
-    spoofing_signal_active_.data = true;
+    spoofing_signal_active_.data = false;
   }
 }
 
