@@ -94,7 +94,7 @@ class ES_EKF():
         #   OptiTrack    #
         ##################
         self.optiTrack_real = False
-        self.optiTrack = True  # True when optiTrack used - sets Q and R different depending on  + TODO: add or remove z-pos estimation(sets to 0)
+        self.optiTrack = False  # True when optiTrack used - sets Q and R different depending on  + TODO: add or remove z-pos estimation(sets to 0)
         self.setZaxisTo0 = True # sets all the variables with z = 0
         self.optiTrack_pos_0 = np.zeros([3,1])
         self.optiTrack_pos_first = True
