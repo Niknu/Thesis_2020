@@ -34,9 +34,11 @@ The ES-EKF.py has the **Error-state Extended Kalman Filter(ES-EKF)** and **Spoof
 ### Simulation_GNSS_attacks
 In this folder contains the 4 files. 2 of them is to spoof and 2 others is to send the position to the drone:
 
-#### Spoofing attack simulatioin
+#### Spoofing attack simulation
 * GNSS_spoofing.py --> If the GPS-plugin in Gazebo is used, should this run for being able to spoof the signal. It converts the GPS to UTM and back agian to GPS.
 * OptiTrack_spoofing.py --> If the OptiTack is used in SITL or physical, should this run for being able to spoof the signal.
+
+The run the two files is done as: python3 <file.py> e.g. ``` python3 GNSS_spoofing.py ```
 
 #### Simulate GNSS signal - OptiTrack
 * relay.py --> This program should run if the physical OptiTrack is used.
